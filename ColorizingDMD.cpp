@@ -84,6 +84,46 @@ bool UpdateSSneeded = false; // Do we need to update the sprite strip
 
 #pragma endregion Global_Variables
 
+#pragma region Frame_Actions
+
+UINT New_Frame_Pos(UINT nofr, UINT nofrins)
+{
+    if (((nofr < nofrins) && (nofr < preframe)) || ((nofr > nofrins) && (nofr >= preframe + nselframes))) return nofr;
+    if (nofrins > preframe + nselframes) return nofr - nselframes;
+    return nofr + nselframes;
+}
+
+bool Move_Parts(UINT nofrins, UINT8* buffer, UINT size_unit, UINT size_val)
+{
+    UINT8* ptbuf = (UINT8*)malloc(nselframes * size_unit * size_val);
+    if (!ptbuf)
+    {
+        MessageBoxA(hWnd, "Can't get memory for parts moving", "Error", MB_OK);
+        return;
+    }
+    memcpy(ptbuf, &buffer[preframe * size_unit], nselframes * size_unit * size_val);
+    if (nofrins < preframe) memmove(&buffer[(nofrins + nselframes) * size_unit], &buffer[nofrins * size_unit], nselframes * size_unit * size_val);
+    else  memmove(&buffer[(nofrins - nselframes) * size_unit], &buffer[nofrins * size_unit], nselframes * size_unit * size_val);
+    memcpy(&buffer[nofrins * size_unit], ptbuf, nselframes * size_unit * size_val);
+    free(ptbuf);
+}
+
+void Move_Frames(UINT nofrins)
+{
+    if ((nofrins >= preframe) && (nofrins < preframe + nselframes))
+    {
+        MessageBoxA(hWnd, "Can't move the selection to the middle of it", "Error", MB_OK);
+        return;
+    }
+    if (nofrins == preframe + nselframes) return;
+    // nofrins = frame to move the selection before
+    Move_Parts(nofrins, MycRom.cFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    move hash
+    
+}
+
+#pragma endregion Frame_Actions
+
 #pragma region Debug_Tools
 
 void cprintf(const char* format,...) // write to the console
