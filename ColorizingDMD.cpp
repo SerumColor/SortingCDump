@@ -86,11 +86,24 @@ bool UpdateSSneeded = false; // Do we need to update the sprite strip
 
 #pragma region Frame_Actions
 
-UINT New_Frame_Pos(UINT nofr, UINT nofrins)
+UINT New_Frame_Moved_Pos(UINT nofr, UINT nofrins)
 {
     if (((nofr < nofrins) && (nofr < preframe)) || ((nofr > nofrins) && (nofr >= preframe + nselframes))) return nofr;
-    if (nofrins > preframe + nselframes) return nofr - nselframes;
+    if (nofrins > preframe + nselframes)
+    {
+        if (nofr == nofrins) return nofrins;
+        if ((nofr >= preframe) && (nofr < preframe + nselframes)) return nofr + nofrins - preframe - nselframes;
+        return nofr - nselframes;
+    }
+    if ((nofr >= preframe) && (nofr < preframe + nselframes)) return nofr - preframe + nofrins;
     return nofr + nselframes;
+}
+
+UINT New_Frame_Del_Pos(UINT nofr, UINT predel, UINT ndel)
+{
+    if (nofr < predel) return nofr;
+    if ((nofr >= predel) && (nofr < predel + ndel)) return (UINT)-1;
+    return nofr - ndel;
 }
 
 bool Move_Parts(UINT nofrins, UINT8* buffer, UINT size_unit, UINT size_val)
@@ -99,13 +112,21 @@ bool Move_Parts(UINT nofrins, UINT8* buffer, UINT size_unit, UINT size_val)
     if (!ptbuf)
     {
         MessageBoxA(hWnd, "Can't get memory for parts moving", "Error", MB_OK);
-        return;
+        return false;
     }
-    memcpy(ptbuf, &buffer[preframe * size_unit], nselframes * size_unit * size_val);
-    if (nofrins < preframe) memmove(&buffer[(nofrins + nselframes) * size_unit], &buffer[nofrins * size_unit], nselframes * size_unit * size_val);
-    else  memmove(&buffer[(nofrins - nselframes) * size_unit], &buffer[nofrins * size_unit], nselframes * size_unit * size_val);
-    memcpy(&buffer[nofrins * size_unit], ptbuf, nselframes * size_unit * size_val);
+    memcpy(ptbuf, &buffer[preframe * size_unit * size_val], nselframes * size_unit * size_val);
+    if (nofrins < preframe)
+    {
+        memmove(&buffer[(nofrins + nselframes) * size_unit * size_val], &buffer[nofrins * size_unit * size_val], (preframe - nofrins) * size_unit * size_val);
+        memcpy(&buffer[nofrins * size_unit * size_val], ptbuf, nselframes * size_unit * size_val);
+    }
+    else
+    {
+        memmove(&buffer[preframe * size_unit * size_val], &buffer[(preframe + nselframes) * size_unit * size_val], (nofrins - preframe - nselframes) * size_unit * size_val);
+        memcpy(&buffer[(nofrins - nselframes) * size_unit * size_val], ptbuf, nselframes * size_unit * size_val);
+    }
     free(ptbuf);
+    return true;
 }
 
 void Move_Frames(UINT nofrins)
@@ -118,8 +139,216 @@ void Move_Frames(UINT nofrins)
     if (nofrins == preframe + nselframes) return;
     // nofrins = frame to move the selection before
     Move_Parts(nofrins, MycRom.cFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
-    move hash
-    
+    Move_Parts(nofrins, (UINT8*)MycRom.HashCode, 1, sizeof(UINT32));
+    Move_Parts(nofrins, MycRom.CompMaskID, 1, sizeof(UINT8));
+    Move_Parts(nofrins, MycRom.ShapeCompMode, 1, sizeof(UINT8));
+    Move_Parts(nofrins, MycRom.MovRctID, 1, sizeof(UINT8));
+    Move_Parts(nofrins, MycRom.cPal, 3 * MycRom.ncColors, sizeof(UINT8));
+    Move_Parts(nofrins, MycRom.DynaMasks, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    Move_Parts(nofrins, MycRom.Dyna4Cols, MycRom.ncColors * MAX_DYNA_SETS_PER_FRAME, sizeof(UINT8));
+    Move_Parts(nofrins, MycRom.FrameSprites, MAX_SPRITES_PER_FRAME, sizeof(UINT8));
+    Move_Parts(nofrins, MycRom.ColorRotations, 3 * MAX_COLOR_ROTATION, sizeof(UINT8));
+    Move_Parts(nofrins, (UINT8*)MycRom.TriggerID, 1, sizeof(UINT32));
+    Move_Parts(nofrins, MycRP.oFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    Move_Parts(nofrins, (UINT8*)MycRP.FrameDuration, 1, sizeof(UINT32));
+    // correct the first section frame
+    for (UINT ti = 0; ti < MycRP.nSections; ti++) MycRP.Section_Firsts[ti] = New_Frame_Moved_Pos(MycRP.Section_Firsts[ti], nofrins);
+    // correct the sprite frame reference
+    for (UINT ti = 0; ti < MycRom.nSprites; ti++) MycRP.Sprite_Col_From_Frame[ti] = New_Frame_Moved_Pos(MycRP.Sprite_Col_From_Frame[ti], nofrins);
+    UpdateFSneeded = true;
+}
+
+UINT isFirstSection[MAX_SECTIONS];
+UINT nfs = 0;
+UINT isUsedBySprite[255];
+UINT nubs = 0;
+
+INT_PTR CALLBACK CheckDel_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+        case WM_INITDIALOG:
+        {
+            char tbuf[256];
+            SendMessage(GetDlgItem(hDlg, IDC_LISTSEC), LB_RESETCONTENT, 0, 0);
+            for (UINT ti = 0; ti < nfs; ti++)
+            {
+                sprintf_s(tbuf, 256, "Section %i - %s -> Frame %i", isFirstSection[ti] + 1, &MycRP.Section_Names[isFirstSection[ti] * SIZE_SECTION_NAMES], MycRP.Section_Firsts[isFirstSection[ti]]);
+                SendMessageA(GetDlgItem(hDlg, IDC_LISTSEC), LB_ADDSTRING, 0, (LPARAM)tbuf);
+            }
+            SendMessage(GetDlgItem(hDlg, IDC_LISTSPR), LB_RESETCONTENT, 0, 0);
+            for (UINT ti = 0; ti < nubs; ti++)
+            {
+                sprintf_s(tbuf, 256, "Sprite %i - %s -> Frame %i", isUsedBySprite[ti] + 1, &MycRP.Sprite_Names[isUsedBySprite[ti] * SIZE_SECTION_NAMES], MycRP.Sprite_Col_From_Frame[isUsedBySprite[ti]]);
+                SendMessageA(GetDlgItem(hDlg, IDC_LISTSPR), LB_ADDSTRING, 0, (LPARAM)tbuf);
+            }
+            return TRUE;
+        }
+        case WM_COMMAND:
+        {
+            switch (LOWORD(wParam))
+            {
+                case IDC_BUTTON:
+                {
+                    if (Button_GetCheck(GetDlgItem(hDlg, IDC_DELFREE)) == BST_CHECKED) EndDialog(hDlg, 2);
+                    else if (Button_GetCheck(GetDlgItem(hDlg, IDC_DELALL)) == BST_CHECKED) EndDialog(hDlg, 1);
+                    else EndDialog(hDlg, 0);
+                    return TRUE;
+                }
+            }
+        }
+    }
+    return FALSE;
+}
+
+bool Del_Parts(UINT pfr, UINT nfr, UINT8* buffer, UINT size_unit, UINT size_val)
+{
+    if (pfr + nfr < MycRom.nFrames)
+    {
+        memmove(&buffer[pfr * size_unit * size_val], &buffer[(pfr + nfr) * size_unit * size_val], (MycRom.nFrames - (pfr + nfr)) * size_unit * size_val);
+    }
+    buffer = (UINT8*)realloc(buffer, (MycRom.nFrames - nfr) * size_unit * size_val);
+    return true;
+}
+
+void Del_Frame_Range(UINT pfr, UINT nfr)
+{
+    Del_Parts(pfr, nfr, MycRom.cFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    Del_Parts(pfr, nfr, (UINT8*)MycRom.HashCode, 1, sizeof(UINT32));
+    Del_Parts(pfr, nfr, MycRom.CompMaskID, 1, sizeof(UINT8));
+    Del_Parts(pfr, nfr, MycRom.ShapeCompMode, 1, sizeof(UINT8));
+    Del_Parts(pfr, nfr, MycRom.MovRctID, 1, sizeof(UINT8));
+    Del_Parts(pfr, nfr, MycRom.cPal, 3 * MycRom.ncColors, sizeof(UINT8));
+    Del_Parts(pfr, nfr, MycRom.DynaMasks, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    Del_Parts(pfr, nfr, MycRom.Dyna4Cols, MycRom.noColors * MAX_DYNA_SETS_PER_FRAME, sizeof(UINT8));
+    Del_Parts(pfr, nfr, MycRom.FrameSprites, MAX_SPRITES_PER_FRAME, sizeof(UINT8));
+    Del_Parts(pfr, nfr, MycRom.ColorRotations, 3 * MAX_COLOR_ROTATION, sizeof(UINT8));
+    Del_Parts(pfr, nfr, (UINT8*)MycRom.TriggerID, 1, sizeof(UINT32));
+    Del_Parts(pfr, nfr, MycRP.oFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    Del_Parts(pfr, nfr, (UINT8*)MycRP.FrameDuration, 1, sizeof(UINT32));
+    for (UINT ti = 0; ti < MycRom.nSprites; ti++) MycRP.Sprite_Col_From_Frame[ti] = New_Frame_Del_Pos(MycRP.Sprite_Col_From_Frame[ti], pfr, nfr);
+    for (UINT ti = 0; ti < MycRP.nSections; ti++) MycRP.Section_Firsts[ti] = New_Frame_Del_Pos(MycRP.Section_Firsts[ti], pfr, nfr);
+    MycRom.nFrames -= nfr;
+}
+
+bool is_Section_Pointed(UINT fr)
+{
+    for (UINT ti = 0; ti < MycRP.nSections; ti++)
+    {
+        if (fr == MycRP.Section_Firsts[ti]) return true;
+    }
+    return false;
+}
+
+bool is_Sprite_Pointed(UINT fr)
+{
+    for (UINT ti = 0; ti < MycRom.nSprites; ti++)
+    {
+        if (fr == MycRP.Sprite_Col_From_Frame[ti]) return true;
+    }
+    return false;
+}
+
+void Del_Sprite(UINT nspr)
+{
+    // delete any reference to this sprite in the framesprites
+    for (UINT ti = 0; ti < MycRom.nFrames; ti++)
+    {
+        UINT tj = 0;
+        while ((MycRom.FrameSprites[ti * MAX_SPRITES_PER_FRAME + tj] != 255) && (MycRom.FrameSprites[ti * MAX_SPRITES_PER_FRAME + tj] != nspr) && (tj < MAX_SPRITES_PER_FRAME)) tj++;
+        if (MycRom.FrameSprites[ti * MAX_SPRITES_PER_FRAME + tj] == nspr)
+        {
+            if (tj < MAX_SPRITES_PER_FRAME - 1) memmove(&MycRom.FrameSprites[ti * MAX_SPRITES_PER_FRAME + tj], &MycRom.FrameSprites[ti * MAX_SPRITES_PER_FRAME + tj], MAX_SPRITES_PER_FRAME - 1 - tj);
+            MycRom.FrameSprites[(ti + 1) * MAX_SPRITES_PER_FRAME - 1] = 255;
+        }
+    }
+    // delete the sprite
+    if (nspr < MycRom.nSprites - 1)
+    {
+        memmove(&MycRom.SpriteDescriptions[nspr * MAX_SPRITE_SIZE * MAX_SPRITE_SIZE], &MycRom.SpriteDescriptions[(nspr + 1) * MAX_SPRITE_SIZE * MAX_SPRITE_SIZE], sizeof(UINT16) * MAX_SPRITE_SIZE * MAX_SPRITE_SIZE * (MycRom.nSprites - 1 - nspr));
+        memmove(&MycRom.SpriteDetAreas[nspr * 4 * MAX_SPRITE_DETECT_AREAS], &MycRom.SpriteDescriptions[(nspr + 1) * 4 * MAX_SPRITE_DETECT_AREAS], sizeof(UINT16) * 4 * MAX_SPRITE_DETECT_AREAS * (MycRom.nSprites - 1 - nspr));
+        memmove(&MycRom.SpriteDetDwords[nspr * MAX_SPRITE_DETECT_AREAS], &MycRom.SpriteDetDwords[(nspr + 1) * MAX_SPRITE_DETECT_AREAS], sizeof(UINT32) * MAX_SPRITE_DETECT_AREAS * (MycRom.nSprites - 1 - nspr));
+        memmove(&MycRom.SpriteDetDwordPos[nspr * MAX_SPRITE_DETECT_AREAS], &MycRom.SpriteDetDwordPos[(nspr + 1) * MAX_SPRITE_DETECT_AREAS], sizeof(UINT16) * MAX_SPRITE_DETECT_AREAS * (MycRom.nSprites - 1 - nspr));
+        memmove(&MycRP.Sprite_Names[nspr * SIZE_SECTION_NAMES], &MycRP.Sprite_Names[(nspr + 1) * SIZE_SECTION_NAMES], SIZE_SECTION_NAMES * (255 - 1 - nspr));
+        memmove(&MycRP.Sprite_Col_From_Frame[nspr], &MycRP.Sprite_Col_From_Frame[nspr + 1], sizeof(UINT32) * (255 - 1 - nspr));
+        memmove(&MycRP.Sprite_Edit_Colors[16 * nspr], &MycRP.Sprite_Edit_Colors[16 * (nspr + 1)], 16 * (255 - 1 - nspr));
+        memmove(&MycRP.SpriteRect[4 * nspr], &MycRP.SpriteRect[4 * (nspr + 1)], sizeof(UINT16) * 4 * (255 - 1 - nspr));
+        memmove(&MycRP.SpriteRectMirror[2 * nspr], &MycRP.SpriteRectMirror[2 * (nspr + 1)], sizeof(BOOL) * 2 * (255 - 1 - nspr));
+    }
+    MycRom.nSprites--;
+}
+
+void Del_Section(UINT nsec)
+{
+    if (nsec < MycRP.nSections - 1)
+    {
+        memmove(&MycRP.Section_Firsts[nsec], &MycRP.Section_Firsts[nsec + 1], sizeof(UINT32) * (MycRP.nSections - 1 - nsec));
+        memmove(&MycRP.Section_Names[SIZE_SECTION_NAMES * nsec], &MycRP.Section_Names[SIZE_SECTION_NAMES * (nsec + 1)], SIZE_SECTION_NAMES * (MycRP.nSections - 1 - nsec));
+    }
+    MycRP.nSections--;
+}
+
+void Del_Frames(void)
+{
+    if (preframe + nselframes > MycRom.nFrames) return;
+    // we first check the sections and sprites pointing to these frames
+    nfs = 0;
+    for (UINT ti = 0; ti < MycRP.nSections; ti++)
+    {
+        if ((MycRP.Section_Firsts[ti] >= preframe) && (MycRP.Section_Firsts[ti] < preframe + nselframes))
+        {
+            isFirstSection[nfs] = ti;
+            nfs++;
+        }
+    }
+    nubs = 0;
+    for (UINT ti = 0; ti < MycRom.nSprites; ti++)
+    {
+        if ((MycRP.Sprite_Col_From_Frame[ti] >= preframe) && (MycRP.Sprite_Col_From_Frame[ti] < preframe + nselframes))
+        {
+            isUsedBySprite[nubs] = ti;
+            nubs++;
+        }
+    }
+    if ((nfs > 0) || (nubs > 0))
+    {
+        int dbres = (int)DialogBox(hInst, MAKEINTRESOURCE(IDD_CHECKDEL), hWnd, CheckDel_Proc);
+        if (dbres == 0) return; // delete cancelled
+        else if (dbres == 1) // delete all and their related sprites and sections
+        {
+            Del_Frame_Range(preframe, nselframes);
+            for (UINT ti = 0; ti < nfs; ti++) Del_Section(isFirstSection[ti]);
+            for (UINT ti = 0; ti < nubs; ti++) Del_Sprite(isUsedBySprite[ti]);
+        }
+        else // delete only the frames with no related sprite or section
+        {
+            UINT pfr, nfr;
+            UINT ti = 0;
+            while (ti < nselframes)
+            {
+                while (((is_Section_Pointed(preframe + ti)) || (is_Sprite_Pointed(preframe + ti))) && (ti < nselframes)) ti++;
+                if (ti == nselframes) break;
+                pfr = ti + preframe;
+                nfr = 0;
+                while (((!is_Section_Pointed(preframe + ti)) && (!is_Sprite_Pointed(preframe + ti))) && (ti < nselframes))
+                {
+                    nfr++;
+                    ti++;
+                }
+                Del_Frame_Range(pfr, nfr);
+                nselframes -= nfr;
+                ti -= nfr;
+            }
+        }
+    }
+    else Del_Frame_Range(preframe, nselframes);
+    UpdateFSneeded = true;
+    nselframes = 1;
+    if (preframe >= MycRom.nFrames)
+    {
+        preframe = MycRom.nFrames - 1;
+        PreFrameInStrip = preframe;
+    }
 }
 
 #pragma endregion Frame_Actions
@@ -781,6 +1010,20 @@ bool isFrameSelected(UINT noFr)   // return false if the frame is not selected, 
     return false;
 }
 
+int Which_Section(UINT nofr)
+{
+    int tres = -1, tfirst = -1;
+    for (int ti = 0; ti < (int)MycRP.nSections; ti++)
+    {
+        if (((int)MycRP.Section_Firsts[ti] > tfirst) && (MycRP.Section_Firsts[ti] <= nofr))
+        {
+            tfirst = (int)MycRP.Section_Firsts[ti];
+            tres = ti;
+        }
+    }
+    return tres;
+}
+
 void Get_Frame_Strip_Line_Color(UINT pos)
 {
     // give the color of the 2 lines under the slider according to if there are selected frames in this line and similar frames to the current one
@@ -833,15 +1076,12 @@ void Frame_Strip_Updateo(void)
     if (MycRom.name[0] == 0) return;
     bool doublepixsize = true;
     if (MycRom.fHeight == 64) doublepixsize = false;
-    UINT8* pfr, * pcol, * pstrip, * psmem, * psmem2, * pfro;
+    UINT8* pfr, * pcol, * pstrip, * psmem, * psmem2;// , * pfro;
     UINT addrow = ScrW * 4;
     pstrip = pFrameoStrip + FS_LMargin * 4 + FRAME_STRIP_H_MARGIN * addrow;
     UINT8 frFrameColor[3] = { 255,255,255 };
     int fwid = 256;
-    if (MycRom.name[0])
-    {
-        if (MycRom.fWidth == 192) fwid = 192;
-    }
+    if (MycRom.fWidth == 192) fwid = 192;
     for (int ti = 0; ti < (int)NFrameToDraw; ti++)
     {
         if ((PreFrameInStrip + ti < 0) || (PreFrameInStrip + ti >= (int)MycRom.nFrames))
@@ -877,7 +1117,7 @@ void Frame_Strip_Updateo(void)
         }
         pfr = &MycRP.oFrames[(PreFrameInStrip + ti) * MycRom.fWidth * MycRom.fHeight];
         pcol = originalcolors;
-        pfro = NULL;
+        //pfro = NULL;
         psmem = pstrip;
         for (UINT tj = 0; tj < MycRom.fHeight; tj++)
         {
@@ -905,6 +1145,8 @@ void Frame_Strip_Updateo(void)
         pstrip = psmem + (fwid + FRAME_STRIP_W_MARGIN) * 4;
     }
     // Draw the frame numbers above the frames
+    const UINT8 SectionColor[3] = { 255,50,255 };
+    int presect = -1, acsect;
     for (UINT ti = 0; ti < NFrameToDraw; ti++)
     {
         if ((PreFrameInStrip + ti < 0) || (PreFrameInStrip + ti >= (int)MycRom.nFrames))
@@ -916,6 +1158,13 @@ void Frame_Strip_Updateo(void)
         Draw_Raw_Number(PreFrameInStrip + ti, FS_LMargin + ti * (fwid + FRAME_STRIP_W_MARGIN), FRAME_STRIP_H_MARGIN - RAW_DIGIT_H - 3, pFrameoStrip, ScrW, FRAME_STRIP_H_MARGIN);
         SetRenderDrawColor(255, 255, 0, 255);
         Draw_Raw_Number(MycRP.FrameDuration[PreFrameInStrip + ti], FS_LMargin + ti * (fwid + FRAME_STRIP_W_MARGIN) + fwid - 5 * RAW_DIGIT_W - 1, FRAME_STRIP_H_MARGIN - RAW_DIGIT_H - 3, pFrameoStrip, ScrW, FRAME_STRIP_H_MARGIN);
+        acsect = Which_Section(PreFrameInStrip + ti);
+        if (acsect != presect)
+        {
+            SetRenderDrawColorv((UINT8*)SectionColor, 255);
+            Draw_Raw_Number(acsect + 1, FS_LMargin + ti * (fwid + FRAME_STRIP_W_MARGIN) + 100, FRAME_STRIP_H_MARGIN - RAW_DIGIT_H - 3, pFrameoStrip, ScrW, FRAME_STRIP_H_MARGIN);
+        }
+        presect = acsect;
     }
     SetRenderDrawColor(255, 255, 255, 255);
     glEnable(GL_TEXTURE_2D);
@@ -933,7 +1182,7 @@ void Frame_Strip_Updatec(void)
     if (MycRom.name[0] == 0) return;
     bool doublepixsize = true;
     if (MycRom.fHeight == 64) doublepixsize = false;
-    UINT8* pfr, * pcol, * pstrip, * psmem, * psmem2, * pfro;
+    UINT8* pfr, * pcol, * pstrip, * psmem, * psmem2;// , * pfro;
     UINT addrow = ScrW * 4;
     pstrip = pFramecStrip + FS_LMargin * 4 + FRAME_STRIP_H_MARGIN_C * addrow;
     UINT8 frFrameColor[3] = { 255,255,255 };
@@ -977,7 +1226,7 @@ void Frame_Strip_Updatec(void)
         }
         pfr = &MycRom.cFrames[(PreFrameInStrip + ti) * MycRom.fWidth * MycRom.fHeight];
         pcol = &MycRom.cPal[(PreFrameInStrip + ti) * MycRom.ncColors * 3];
-        pfro = &MycRP.oFrames[(PreFrameInStrip + ti) * MycRom.fWidth * MycRom.fHeight];
+        //pfro = &MycRP.oFrames[(PreFrameInStrip + ti) * MycRom.fWidth * MycRom.fHeight];
 
 
         psmem = pstrip;
@@ -1000,7 +1249,7 @@ void Frame_Strip_Updatec(void)
                 }
                 pstrip += 4;
                 pfr++;
-                pfro++;
+                //pfro++;
             }
             pstrip = psmem2 + addrow;
             if (doublepixsize) pstrip += addrow;
@@ -1328,6 +1577,12 @@ bool Load_cRom(char* name)
     fread(&MycRom.fHeight, sizeof(UINT), 1, pfile);
     fread(&MycRom.nFrames, sizeof(UINT), 1, pfile);
     fread(&MycRom.noColors, sizeof(UINT), 1, pfile);
+    for (unsigned int ti = 0; ti < MycRom.noColors; ti++) // shader of noColors oranges
+    {
+        originalcolors[ti * 3] = (UINT8)(255.0 * (float)ti / (float)(MycRom.noColors - 1));
+        originalcolors[ti * 3 + 1] = (UINT8)(127.0 * (float)ti / (float)(MycRom.noColors - 1));
+        originalcolors[ti * 3 + 2] = (UINT8)(0.0 * (float)ti / (float)(MycRom.noColors - 1));
+    }
     fread(&MycRom.ncColors, sizeof(UINT), 1, pfile);
     fread(&MycRom.nCompMasks, sizeof(UINT), 1, pfile);
     fread(&MycRom.nMovMasks, sizeof(UINT), 1, pfile);
@@ -1391,6 +1646,7 @@ bool Load_cRom(char* name)
         }
     }
     fclose(pfile);
+    UpdateFSneeded = true;
     return true;
 }
 
@@ -2456,6 +2712,11 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                     if (MycRP.SaveDir[strlen(MycRP.SaveDir) - 1] != '\\') strcat_s(MycRP.SaveDir, MAX_PATH, "\\");
                     CoTaskMemFree(piil);
                     SetDlgItemTextA(hwTB, IDC_VPATH, MycRP.SaveDir);
+                    return TRUE;
+                }
+                case IDC_DELFRAMES:
+                {
+                    Del_Frames();
                     return TRUE;
                 }
             }
