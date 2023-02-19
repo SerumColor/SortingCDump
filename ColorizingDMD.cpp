@@ -43,6 +43,9 @@ UINT ColSetMode = 0, preColRot = 0, acColRot = 0; // 0- displaying colsets, 1- d
 GLFWwindow * glfwframestripo, * glfwframestripc;	// handle+context of our window
 bool fDone = false;
 
+bool ChooseMove = false;
+bool WhiteMoveButton = true;
+
 //UINT acFrame = 0, prevFrame = 0;
 UINT preframe = 0, nselframes = 1;
 
@@ -133,7 +136,7 @@ void Move_Frames(UINT nofrins)
 {
     if ((nofrins >= preframe) && (nofrins < preframe + nselframes))
     {
-        MessageBoxA(hWnd, "Can't move the selection to the middle of it", "Error", MB_OK);
+        MessageBoxA(hWnd, "Can't move the selection in the selection", "Error", MB_OK);
         return;
     }
     if (nofrins == preframe + nselframes) return;
@@ -145,7 +148,7 @@ void Move_Frames(UINT nofrins)
     Move_Parts(nofrins, MycRom.MovRctID, 1, sizeof(UINT8));
     Move_Parts(nofrins, MycRom.cPal, 3 * MycRom.ncColors, sizeof(UINT8));
     Move_Parts(nofrins, MycRom.DynaMasks, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
-    Move_Parts(nofrins, MycRom.Dyna4Cols, MycRom.ncColors * MAX_DYNA_SETS_PER_FRAME, sizeof(UINT8));
+    Move_Parts(nofrins, MycRom.Dyna4Cols, MycRom.noColors * MAX_DYNA_SETS_PER_FRAME, sizeof(UINT8));
     Move_Parts(nofrins, MycRom.FrameSprites, MAX_SPRITES_PER_FRAME, sizeof(UINT8));
     Move_Parts(nofrins, MycRom.ColorRotations, 3 * MAX_COLOR_ROTATION, sizeof(UINT8));
     Move_Parts(nofrins, (UINT8*)MycRom.TriggerID, 1, sizeof(UINT32));
@@ -162,6 +165,18 @@ UINT isFirstSection[MAX_SECTIONS];
 UINT nfs = 0;
 UINT isUsedBySprite[255];
 UINT nubs = 0;
+
+void UpdateSectionList(void)
+{
+    HWND hlst = GetDlgItem(hwTB, IDC_SECTION);
+    SendMessage(hlst, CB_RESETCONTENT, 0, 0);
+    for (UINT32 ti = 0; ti < MycRP.nSections; ti++)
+    {
+        char tbuf[256];
+        sprintf_s(tbuf, 256, "%i - %s", ti, &MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
+        SendMessageA(hlst, CB_ADDSTRING, 0, (LPARAM)tbuf);
+    }
+}
 
 INT_PTR CALLBACK CheckDel_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -182,6 +197,7 @@ INT_PTR CALLBACK CheckDel_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lP
                 sprintf_s(tbuf, 256, "Sprite %i - %s -> Frame %i", isUsedBySprite[ti] + 1, &MycRP.Sprite_Names[isUsedBySprite[ti] * SIZE_SECTION_NAMES], MycRP.Sprite_Col_From_Frame[isUsedBySprite[ti]]);
                 SendMessageA(GetDlgItem(hDlg, IDC_LISTSPR), LB_ADDSTRING, 0, (LPARAM)tbuf);
             }
+            Button_SetCheck(GetDlgItem(hDlg, IDC_CANCEL), TRUE);
             return TRUE;
         }
         case WM_COMMAND:
@@ -399,6 +415,15 @@ void AffLastError(char* lpszFunction)
 
     LocalFree(lpMsgBuf);
     LocalFree(lpDisplayBuf);
+}
+
+bool SetIcon(HWND ButHWND, UINT ButIco)
+{
+    HICON hicon = LoadIcon(hInst, MAKEINTRESOURCE(ButIco));
+    if (!hicon) AffLastError((char*)"SetIcon");
+    SendMessageW(ButHWND, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hicon);
+    DestroyIcon(hicon);
+    return true;
 }
 
 #pragma endregion Debug_Tools
@@ -2417,6 +2442,13 @@ void mouse_scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
     UpdateFSneeded = true;
 }
 
+void ResetMove(void)
+{
+    ChooseMove = false;
+    WhiteMoveButton = true;
+    SetIcon(GetDlgItem(hwTB, IDC_MOVEFRAMES), IDI_MOVEFRAME);
+}
+
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
     double xpos, ypos;
@@ -2453,23 +2485,35 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     UINT tpFrame = PreFrameInStrip + (xipos - FS_LMargin) / (wid + FRAME_STRIP_W_MARGIN);
                     if (tpFrame >= MycRom.nFrames) tpFrame = MycRom.nFrames - 1;
                     if (tpFrame < 0) tpFrame = 0;
-                    if (mods & GLFW_MOD_SHIFT)
+                    if (ChooseMove)
                     {
-                        // select a range
-                        if (preframe > tpFrame)
+                        if (MessageBoxA(hWnd, "Confirm you want to move these frames?", "Confirm", MB_YESNO) == IDYES)
                         {
-                            nselframes = preframe - tpFrame + 1;
-                            preframe = tpFrame;
+                            Move_Frames(tpFrame);
+                            ResetMove();
+                            UpdateFSneeded = true;
                         }
-                        else nselframes = tpFrame - preframe + 1;
                     }
                     else
                     {
-                        // selecting just this frame
-                        preframe = tpFrame;
-                        nselframes = 1;
+                        if (mods & GLFW_MOD_SHIFT)
+                        {
+                            // select a range
+                            if (preframe > tpFrame)
+                            {
+                                nselframes = preframe - tpFrame + 1;
+                                preframe = tpFrame;
+                            }
+                            else nselframes = tpFrame - preframe + 1;
+                        }
+                        else
+                        {
+                            // selecting just this frame
+                            preframe = tpFrame;
+                            nselframes = 1;
+                        }
+                        UpdateFSneeded = true;
                     }
-                    UpdateFSneeded = true;
                 }
             }
         }
@@ -2586,15 +2630,6 @@ bool CreateTextures(void)
     return true;
 }
 
-bool SetIcon(HWND ButHWND, UINT ButIco)
-{
-    HICON hicon = LoadIcon(hInst, MAKEINTRESOURCE(ButIco));
-    if (!hicon) AffLastError((char*)"SetIcon");
-    SendMessageW(ButHWND, BM_SETIMAGE, IMAGE_ICON, (LPARAM)hicon);
-    DestroyIcon(hicon);
-    return true;
-}
-
 INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -2605,9 +2640,7 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
             {
                 case IDC_OPENCDUMP:
                 {
-                    //int nrest = (int)DialogBoxA(hInst, MAKEINTRESOURCEA(IDD_LISTITEMS), hWnd, (DLGPROC)List_Proc);
-                    //if (nrest >= 0)
-                    //{
+                    ResetMove();
                     OPENFILENAMEA ofn;
                     ZeroMemory(&ofn, sizeof(ofn));
                     char szFile[MAX_PATH];
@@ -2629,6 +2662,7 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                 }
                 case IDC_ADDCDUMP:
                 {
+                    ResetMove();
                     if (MycRom.name[0] == 0) return TRUE;
                     OPENFILENAMEA ofn;
                     ZeroMemory(&ofn, sizeof(ofn));
@@ -2650,6 +2684,7 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                 }
                 case IDC_OPENCROM:
                 {
+                    ResetMove();
                     OPENFILENAMEA ofn;
                     ZeroMemory(&ofn, sizeof(ofn));
                     char szFile[MAX_PATH];
@@ -2671,31 +2706,12 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                         ofn.lpstrFile[strlen(ofn.lpstrFile) - 1] = 0;
                         Load_cRP(ofn.lpstrFile);
                     }
+                    UpdateSectionList();
                     return TRUE;
                 }
-                /*case IDC_ADDCROM:
-                {
-                    if (MycRom.name[0] == 0) return TRUE;
-                    OPENFILENAMEA ofn;
-                    ZeroMemory(&ofn, sizeof(ofn));
-                    char szFile[MAX_PATH];
-                    ofn.lStructSize = sizeof(OPENFILENAMEA);
-                    ofn.hwndOwner = hWnd;
-                    ofn.lpstrFile = szFile;
-                    ofn.lpstrFile[0] = '\0';
-                    ofn.nMaxFile = sizeof(szFile);
-                    ofn.lpstrFilter = "Serum(cRom)\0*.cRom\0\0";
-                    ofn.nFilterIndex = 1;
-                    ofn.lpstrFileTitle = NULL;
-                    ofn.nMaxFileTitle = 0;
-                    ofn.lpstrInitialDir = NULL;
-                    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-                    GetOpenFileNameA(&ofn);
-                    Add_cRom(ofn.lpstrFile);
-                    return TRUE;
-                }*/
                 case IDC_VPMPATH:
                 {
+                    ResetMove();
                     BROWSEINFOA bi;
                     bi.hwndOwner = hWnd;
                     bi.pidlRoot = NULL;
@@ -2716,7 +2732,29 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                 }
                 case IDC_DELFRAMES:
                 {
-                    Del_Frames();
+                    if (MycRom.name[0] == 0) return TRUE;
+                    ResetMove();
+                    if (MessageBoxA(hWnd, "Confirm you want to delete these frames?", "Confirm", MB_YESNO) == IDYES) Del_Frames();
+                    UpdateSectionList();
+                    return TRUE;
+                }
+                case IDC_MOVEFRAMES:
+                {
+                    if (MycRom.name[0] == 0) return TRUE;
+                    if (ChooseMove) ResetMove(); else ChooseMove = true;
+                    UpdateSectionList();
+                    return TRUE;
+                }
+                case IDC_SECTION:
+                {
+                    if (MycRom.name[0] == 0) return TRUE;
+                    unsigned char acpos = (unsigned char)SendMessage(GetDlgItem(hDlg, IDC_SECTION), CB_GETCURSEL, 0, 0) - 1;
+                    if ((HIWORD(wParam) == CBN_SELCHANGE) && (acpos < MAX_SECTIONS - 1))
+                    {
+                        PreFrameInStrip = MycRP.Section_Firsts[acpos];
+                        UpdateFSneeded = true;
+                        SetDlgItemTextA(hwTB, IDC_SECTIONNAME, "");// &MycRP.Section_Names[acpos * SIZE_SECTION_NAMES]);
+                    }
                     return TRUE;
                 }
             }
@@ -2725,6 +2763,18 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
     return FALSE;
 }
 
+
+WNDPROC oldSectionFunc;
+LRESULT CALLBACK SubclassSectionProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg) {
+    case WM_KEYDOWN:
+    {
+        return TRUE;
+    }
+    }
+    return CallWindowProc(oldSectionFunc, hwnd, uMsg, wParam, lParam);// CallWindowProc(oldMaskListFunc, hwnd, uMsg, wParam, lParam);
+}
 
 bool CreateToolbar(void)
 {
@@ -2753,6 +2803,11 @@ bool CreateToolbar(void)
 
     SetWindowLong(GetDlgItem(hwTB, IDC_STRY1), GWL_STYLE, WS_BORDER | WS_CHILD | WS_VISIBLE | SS_BLACKRECT);
     SetWindowPos(GetDlgItem(hwTB, IDC_STRY1), 0, 0, 0, 5, 100, SWP_NOMOVE | SWP_NOZORDER);
+    SetWindowLong(GetDlgItem(hwTB, IDC_STRY2), GWL_STYLE, WS_BORDER | WS_CHILD | WS_VISIBLE | SS_BLACKRECT);
+    SetWindowPos(GetDlgItem(hwTB, IDC_STRY2), 0, 0, 0, 5, 100, SWP_NOMOVE | SWP_NOZORDER);
+    oldSectionFunc = (WNDPROC)GetWindowLongPtr(GetDlgItem(hwTB, IDC_SECTION), GWLP_WNDPROC);
+    SetWindowSubclass(GetDlgItem(hwTB, IDC_SECTION), (SUBCLASSPROC)SubclassSectionProc, 1, 0);
+    UpdateSectionList();
 
     // to avoid beeps on key down
     SetFocus(hwTB);
@@ -2881,6 +2936,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     //Load_cDump(MycRP.SaveDir, (char*)"baywatch");
 
     // Boucle de messages principale :
+    DWORD actime=timeGetTime();
     while (!fDone)
     {
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
@@ -2890,6 +2946,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         }
         if (!IsIconic(hWnd))
         {
+            DWORD newtime = timeGetTime();
+            if (ChooseMove)
+            {
+                if (newtime > actime + 500)
+                {
+                    actime = newtime;
+                    if (WhiteMoveButton)
+                    {
+                        WhiteMoveButton = false;
+                        SetIcon(GetDlgItem(hwTB, IDC_MOVEFRAMES), IDI_MOVEFRAME2);
+                    }
+                    else
+                    {
+                        WhiteMoveButton = true;
+                        SetIcon(GetDlgItem(hwTB, IDC_MOVEFRAMES), IDI_MOVEFRAME);
+                    }
+                }
+            }
             if (!(GetKeyState(VK_LEFT) & 0x8000)) isLeftReleased = true;
             if (!(GetKeyState(VK_RIGHT) & 0x8000)) isRightReleased = true;
             if (MycRom.name[0] != 0)

@@ -37,6 +37,7 @@
 #define IDI_ADDTXT                      267
 #define IDI_OPENTXT                     268
 #define IDD_CHECKDEL                    269
+#define IDI_MOVEFRAME2                  270
 #define IDC_COLMODE2                    1001
 #define IDC_NEW                         1001
 #define IDC_COLMODE3                    1002
@@ -93,6 +94,7 @@
 #define IDC_STRY5                       1057
 #define IDC_STRY1                       1057
 #define IDC_STRY6                       1058
+#define IDC_STRY2                       1058
 #define IDC_STRY7                       1059
 #define IDC_STRY8                       1060
 #define IDC_STRY9                       1061
@@ -162,10 +164,11 @@
 #define IDC_LIST                        1115
 #define IDC_LISTSEC                     1115
 #define IDC_INVERTSEL3                  1117
-#define IDC_LIST2                       1118
 #define IDC_LISTSPR                     1118
 #define IDC_DELALL                      1119
 #define IDC_CANCEL                      1120
+#define IDC_COMBO2                      1120
+#define IDC_SECTION                     1120
 #define IDC_DELFREE                     1121
 #define IDC_STATIC                      -1
 
@@ -174,9 +177,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        270
+#define _APS_NEXT_RESOURCE_VALUE        271
 #define _APS_NEXT_COMMAND_VALUE         32776
-#define _APS_NEXT_CONTROL_VALUE         1120
+#define _APS_NEXT_CONTROL_VALUE         1121
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
 #endif

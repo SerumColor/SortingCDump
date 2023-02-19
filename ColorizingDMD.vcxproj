@@ -73,18 +73,22 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <IncludePath>E:\Mes documents\C++\includes;$(IncludePath)</IncludePath>
     <LibraryPath>E:\Mes documents\C++\libs win32;$(LibraryPath)</LibraryPath>
+    <TargetName>SortingCDump</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <IncludePath>E:\Mes documents\C++\includes;$(IncludePath)</IncludePath>
     <LibraryPath>E:\Mes documents\C++\libs win32;$(LibraryPath)</LibraryPath>
+    <TargetName>SortingCDump</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IncludePath>E:\Mes documents\C++\includes;$(IncludePath)</IncludePath>
     <LibraryPath>E:\Mes documents\C++\libs x64;$(LibraryPath)</LibraryPath>
+    <TargetName>SortingCDump</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IncludePath>E:\Mes documents\C++\includes;$(IncludePath)</IncludePath>
     <LibraryPath>E:\Mes documents\C++\libs x64;$(LibraryPath)</LibraryPath>
+    <TargetName>SortingCDump</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -195,6 +199,7 @@
     <Image Include="icons\mask-.ico" />
     <Image Include="icons\MoveSection.ico" />
     <Image Include="icons\movsel.ico" />
+    <Image Include="icons\movsel2.ico" />
     <Image Include="icons\new.ico" />
     <Image Include="icons\openCD+.ico" />
     <Image Include="icons\openCD.ico" />

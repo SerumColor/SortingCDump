@@ -222,6 +222,9 @@
     <Image Include="icons\opentxt.ico">
       <Filter>Fichiers de ressources</Filter>
     </Image>
+    <Image Include="icons\movsel2.ico">
+      <Filter>Fichiers de ressources</Filter>
+    </Image>
   </ItemGroup>
   <ItemGroup>
     <Text Include="formats.txt" />
