@@ -145,6 +145,7 @@ typedef struct {
 	BOOL active; // deactivated if similar to a previous one
 	char* ptr; // pointer to the first color index of the frame inside the TXT file
 	UINT32 timecode; // time code of the frame
+	UINT32 hashcode;
 } sFrames;
 
 typedef struct {

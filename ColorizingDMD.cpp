@@ -1572,13 +1572,7 @@ bool Save_cRom(char* path)
     fwrite(MycRom.DynaMasks, 1, MycRom.nFrames * MycRom.fWidth * MycRom.fHeight, pfile);
     fwrite(MycRom.Dyna4Cols, 1, MycRom.nFrames * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors, pfile);
     fwrite(MycRom.FrameSprites, 1, MycRom.nFrames * MAX_SPRITES_PER_FRAME, pfile);
-    for (UINT ti = 0; ti < MycRom.nFrames; ti++)
-    {
-        pactiveframes[ti] = 1;
-        /*if (MycRP.FrameDuration[ti] > SKIP_FRAME_DURATION) continue;
-        continue;
-        pactiveframes[ti] = 0;*/
-    }
+    for (UINT ti = 0; ti < MycRom.nFrames; ti++) pactiveframes[ti] = 1;
     fwrite(pactiveframes, 1, MycRom.nFrames, pfile);
     free(pactiveframes);
     fwrite(MycRom.ColorRotations, 1, 3 * MAX_COLOR_ROTATION * MycRom.nFrames, pfile);
@@ -2100,10 +2094,8 @@ bool Load_cDump(char* path)// , char* rom)
     return true;
 }
 
-bool Add_cDump(char* path)//, char* rom)
+bool Add_cDump(char* path)
 {
-    //char tbuf[MAX_PATH];
-    //sprintf_s(tbuf, MAX_PATH, "%s%s.cdump", path, rom);
 #pragma warning(suppress : 4996)
     FILE* pf = fopen(path, "rb");
     if (pf == 0)
@@ -2111,13 +2103,6 @@ bool Add_cDump(char* path)//, char* rom)
         MessageBoxA(hWnd, "Can't open the file", "Error", MB_OK);
         return false;
     }
-    // Initiate cROM
-    /*if (strcmp(MycRom.name, rom) != 0)
-    {
-        MessageBoxA(hWnd, "The rom name is not the same, this file can't be added", "Error", MB_OK);
-        fclose(pf);
-        return false;
-    }*/
     UINT32 tnframes, tvar;
     fread(&tnframes, sizeof(UINT32), 1, pf);
     char tbuf[64];
@@ -2218,117 +2203,641 @@ bool Add_cDump(char* path)//, char* rom)
     return true;
 }
 
-/*#define MAX_FILES_LIST 2048
-char dir_list[MAX_FILES_LIST * MAX_PATH];
-char rom_list[MAX_FILES_LIST * MAX_PATH];
-
-void get_file_list(char* folder, char* filtername, HWND hLst, int* pnfiles)
+/*unsigned int Count_TXT_Frames(char* TXTF_buffer, size_t TXTF_buffer_len)
 {
-    HANDLE hFind;
-    WIN32_FIND_DATAA data;
-    char szFullPattern[MAX_PATH];
-    PathCombineA(szFullPattern, folder, "*.*");
-    hFind = FindFirstFileA(szFullPattern, &data);
-    szFullPattern[0] = 0;
-
-    if (hFind != INVALID_HANDLE_VALUE) 
+    // check the number of frames in the txt file
+    unsigned int nF = 0;
+    for (size_t curPos = 0; curPos < TXTF_buffer_len; curPos++)
     {
-        do
-        {
-            if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && (data.cFileName[0] != '.'))
-            {
-                // found a subdirectory; recurse into it
-                PathCombineA(szFullPattern, folder, data.cFileName);
-                strcat_s(szFullPattern, MAX_PATH, "\\");
-                get_file_list(szFullPattern, filtername, hLst,pnfiles);
-            }
-        } while (FindNextFileA(hFind, &data));
-        FindClose(hFind);
+        if (TXTF_buffer[curPos] == 'x') nF++;
     }
+    return nF;
+}
 
-    // Now we are going to look for the matching files
-    PathCombineA(szFullPattern, folder, filtername);
-    hFind = FindFirstFileA(szFullPattern, &data);
-    if (hFind != INVALID_HANDLE_VALUE)
+bool Get_Frames_Ptr_Size_And_Number_Of_Colors(sFrames** ppFrames, UINT nFrames, char* TXTF_buffer, size_t TXTF_buffer_len)
+{
+    // we get the pointer on the data of each frame inside the txt file
+    MycRom.noColors = 4;
+    sFrames* pFrames = (sFrames*)malloc(sizeof(sFrames) * nFrames);
+    *ppFrames = pFrames;
+    //char tbuf[16];
+    if (!pFrames)
     {
-        do
-        {
-            if ((!(data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && (*pnfiles < MAX_FILES_LIST)))
-            {
-                // found a file; do something with it
-                PathCombineA(szFullPattern, folder, data.cFileName);
-                strcpy_s(&dir_list[*pnfiles * MAX_PATH], MAX_PATH, folder);
-                strcpy_s(&rom_list[*pnfiles * MAX_PATH], MAX_PATH, data.cFileName);
-                rom_list[*pnfiles * MAX_PATH + strlen(&rom_list[*pnfiles * MAX_PATH]) - 6] = 0;
-                SendMessageA(hLst, LB_ADDSTRING, 0, (LPARAM)szFullPattern);
-                (*pnfiles)++;
-            }
-        } while (FindNextFileA(hFind, &data));
-        FindClose(hFind);
+        cprintf("Unable to get buffer memory for the frames");
+        return false;
     }
+    unsigned int acFr = 0;
+    for (size_t curPos = 0; curPos < TXTF_buffer_len; curPos++)
+    {
+        if (TXTF_buffer[curPos] == 'x')
+        {
+            char tbuf[12];
+            tbuf[0] = '0';
+            for (UINT ti = 0; ti < 9; ti++) tbuf[ti + 1] = TXTF_buffer[curPos + ti];
+            tbuf[10] = 0;
+            pFrames[acFr].timecode = (UINT32)strtol(tbuf, NULL, 16);
+            // next line
+            while ((TXTF_buffer[curPos] != '\n') && (TXTF_buffer[curPos] != '\r')) curPos++;
+            while ((TXTF_buffer[curPos] == '\n') || (TXTF_buffer[curPos] == '\r') || (TXTF_buffer[curPos] == ' ')) curPos++;
+            // we are at the beginning of the frame
+            pFrames[acFr].active = TRUE;
+            pFrames[acFr].ptr = &TXTF_buffer[curPos];
+            // if first frame, we check the size of the frame
+            if (acFr == 0)
+            {
+                size_t finPos = curPos;
+                while (TXTF_buffer[finPos] > ' ') finPos++;
+                MycRom.fWidth = (unsigned int)(finPos - curPos);
+                MycRom.fHeight = 1;
+                while (TXTF_buffer[finPos + 2] > ' ')
+                {
+                    finPos += 2;
+                    while ((TXTF_buffer[finPos] != '\n') && (TXTF_buffer[finPos] != '\r')) finPos++;
+                    MycRom.fHeight++;
+                }
+            }
+            // then we translate the frame '0'-'9' -> 0-9, 'a'-'f' -> 10-15, 'A'-'F' -> 10-15 and removing the '\r' and '\n' and check for the number of colors
+            char* pPos = pFrames[acFr].ptr;
+            char* pPos2 = pPos;
+            for (UINT tj = 0; tj < MycRom.fHeight; tj++)
+            {
+                for (UINT ti = 0; ti < MycRom.fWidth; ti++)
+                {
+                    if ((*pPos >= (UINT8)'0') && (*pPos <= (UINT8)'9')) *pPos2 = *pPos - (UINT8)'0';
+                    else if ((*pPos >= (UINT8)'A') && (*pPos <= (UINT8)'Z')) *pPos2 = *pPos - (UINT8)'A' + 10;
+                    else if ((*pPos >= (UINT8)'a') && (*pPos <= (UINT8)'z')) *pPos2 = *pPos - (UINT8)'a' + 10;
+                    if ((*pPos2) > 3) MycRom.noColors = 16;
+                    pPos++;
+                    pPos2++;
+                }
+                while (((*pPos) == '\n') || ((*pPos) == '\r')) pPos++;
+            }
+            curPos = pPos - TXTF_buffer;
+            pFrames[acFr].hashcode = crc32_fast((UINT8*)pFrames[acFr].ptr, MycRom.fHeight * MycRom.fWidth);
+            acFr++;
+        }
+    }
+    //if (MycRom.fHeight == 64) acZoom = basezoom; else acZoom = 2 * basezoom;
+    return true;
+}
+
+bool Parse_TXT(char* TXTF_name, char* TXTF_buffer, size_t TXTF_buffer_len, sFrames** ppFrames, UINT* pnFrames)
+{
+    // Initial TXT file parsing: count the frames in the file then get pointers to the frames in the file buffer + determine nb of colors and frame size
+    if (!TXTF_buffer) return false;
+    *pnFrames = Count_TXT_Frames(TXTF_buffer, TXTF_buffer_len);
+    if (!Get_Frames_Ptr_Size_And_Number_Of_Colors(ppFrames, *pnFrames, TXTF_buffer, TXTF_buffer_len))
+    {
+        Free_Project();
+        return false;
+    }
+    cprintf("Opened txt file %s with %i frames: resolution %ix%i, %i colors", TXTF_name, *pnFrames, MycRom.fWidth, MycRom.fHeight, MycRom.noColors);
+    return true;
+}
+
+void CompareFrames(UINT nFrames, sFrames* pFrames)
+{
+    //HWND hDlg = Display_Wait("Wait please...");
+    UINT nfremoved = 0;
+    // Compare all the frames of a txt file (ignoring masks) to remove copy frames
+    if (nFrames < 2) return;
+    for (int ti = 0; ti < (int)nFrames - 1; ti++)
+    {
+        if (pFrames[ti].active == FALSE) continue;
+        for (int tj = ti + 1; tj < (int)nFrames; tj++)
+        {
+            if (pFrames[tj].active == FALSE) continue;
+            if (pFrames[ti].hashcode==pFrames[tj].hashcode)
+            {
+                pFrames[tj].active = FALSE;
+                nfremoved++;
+            }
+        }
+    }
+    cprintf("%i frames removed as duplicate, %i added", nfremoved, nFrames - nfremoved);
+}
+
+void CompareAdditionalFrames(UINT nFrames, sFrames* pFrames)
+{
+    UINT nfremoved = 0;
+    // first compare the new frames between them
+    if (nFrames < 2) return;
+    for (int ti = 0; ti < (int)nFrames - 1; ti++)
+    {
+        if (pFrames[ti].active == FALSE) continue;
+        for (int tj = ti + 1; tj < (int)nFrames; tj++)
+        {
+            if (pFrames[tj].active == FALSE) continue;
+            if (pFrames[ti].hashcode == pFrames[tj].hashcode)
+            {
+                pFrames[tj].active = FALSE;
+                nfremoved++;
+            }
+        }
+    }
+    // then compare the new frames with the previous ones
+    for (unsigned int ti = 0; ti < nFrames; ti++)
+    {
+        //on compare 2 frames ici
+        for (int tj = 0; tj < (int)MycRom.nFrames; tj++)
+        {
+            if (pFrames[ti].active == FALSE) continue;
+            if (pFrames[ti].hashcode == MycRom.HashCode[tj])
+            {
+                pFrames[ti].active = FALSE;
+                nfremoved++;
+            }
+        }
+    }
+    cprintf("%i frames removed as duplicate, %i added", nfremoved, nFrames - nfremoved);
+    //DestroyWindow(hDlg);
+}
+
+bool CopyTXTFrames2Frame(UINT nFrames, sFrames* pFrames)
+{
+    // Convert a txt frame to oFrame
+    MycRom.ncColors = 64;
+    // count remaining original frames
+    unsigned int nF = 0;
+    for (unsigned int ti = 0; ti < nFrames; ti++)
+    {
+        if (pFrames[ti].active == TRUE) nF++;
+    }
+    // allocating cROM Frame space
+    MycRP.oFrames = (UINT8*)malloc(nF * sizeof(UINT8) * MycRom.fWidth * MycRom.fHeight);
+    if (!MycRP.oFrames)
+    {
+        cprintf("Unable to allocate memory for original frames");
+        return false;
+    }
+    MycRom.HashCode = (UINT*)malloc(nF * sizeof(UINT));
+    if (!MycRom.HashCode)
+    {
+        Free_cRom();
+        cprintf("Unable to allocate memory for hashtags");
+        return false;
+    }
+    MycRom.ShapeCompMode = (UINT8*)malloc(nF);
+    if (!MycRom.ShapeCompMode)
+    {
+        Free_cRom();
+        cprintf("Unable to allocate memory for shape mode");
+        return false;
+    }
+    memset(MycRom.ShapeCompMode, FALSE, nF);
+    MycRom.CompMaskID = (UINT8*)malloc(nF * sizeof(UINT8));
+    if (!MycRom.CompMaskID)
+    {
+        Free_cRom();
+        cprintf("Unable to allocate memory for comparison mask IDs");
+        return false;
+    }
+    memset(MycRom.CompMaskID, 255, nF * sizeof(UINT8));
+    MycRom.MovRctID = (UINT8*)malloc(nF * sizeof(UINT8));
+    if (!MycRom.MovRctID)
+    {
+        Free_cRom();
+        cprintf("Unable to allocate memory for moving comparison mask IDs");
+        return false;
+    }
+    memset(MycRom.MovRctID, 255, nF * sizeof(UINT8));
+    MycRom.CompMasks = (UINT8*)malloc(MAX_MASKS * MycRom.fWidth * MycRom.fHeight);
+    if (!MycRom.CompMasks)
+    {
+        cprintf("Unable to allocate memory for comparison masks");
+        return false;
+    }
+    memset(MycRom.CompMasks, 0, MAX_MASKS * MycRom.fWidth * MycRom.fHeight);
+    MycRom.MovRcts = NULL;
+    MycRom.nCompMasks = 0;
+    MycRom.nMovMasks = 0;
+    MycRom.nSprites = 0;
+    size_t sizepalette = MycRom.ncColors * 3;
+    MycRom.cPal = (UINT8*)malloc(nF * sizepalette);
+    if (!MycRom.cPal)
+    {
+        Free_cRom();
+        cprintf("Unable to allocate memory for colorized palettes");
+        return false;
+    }
+    MycRom.cFrames = (UINT8*)malloc(nF * (size_t)MycRom.fWidth * (size_t)MycRom.fHeight);
+    if (!MycRom.cFrames)
+    {
+        cprintf("Unable to allocate memory for colorized frames");
+        Free_cRom();
+        return false;
+    }
+    MycRom.DynaMasks = (UINT8*)malloc(nF * (size_t)MycRom.fWidth * (size_t)MycRom.fHeight);
+    if (!MycRom.DynaMasks)
+    {
+        cprintf("Unable to allocate memory for dynamic masks");
+        Free_cRom();
+        return false;
+    }
+    memset(MycRom.DynaMasks, 255, nF * MycRom.fWidth * MycRom.fHeight);
+    MycRom.Dyna4Cols = (UINT8*)malloc(nF * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors);
+    if (!MycRom.Dyna4Cols)
+    {
+        cprintf("Unable to allocate memory for dynamic color sets");
+        Free_cRom();
+        return false;
+    }
+    for (UINT tj = 0; tj < nF; tj++)
+    {
+        for (UINT ti = 0; ti < MAX_DYNA_SETS_PER_FRAME; ti++)
+        {
+            for (UINT tk = 0; tk < MycRom.noColors; tk++) MycRom.Dyna4Cols[tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + ti * MycRom.noColors + tk] = (UINT8)(ti * MycRom.noColors + tk);
+        }
+    }
+    MycRom.FrameSprites = (UINT8*)malloc(nF * MAX_SPRITES_PER_FRAME);
+    if (!MycRom.FrameSprites)
+    {
+        cprintf("Unable to allocate memory for sprite IDs");
+        Free_cRom();
+        return false;
+    }
+    memset(MycRom.FrameSprites, 255, nF * MAX_SPRITES_PER_FRAME);
+    MycRom.TriggerID = (UINT32*)malloc(nF * sizeof(UINT32));
+    if (!MycRom.TriggerID)
+    {
+        cprintf("Unable to allocate memory for trigger IDs");
+        Free_cRom();
+        return false;
+    }
+    memset(MycRom.TriggerID, 0xFF, nF * sizeof(UINT32));
+    MycRP.FrameDuration = (UINT32*)malloc(nF * sizeof(UINT32));
+    if (!MycRP.FrameDuration)
+    {
+        cprintf("Unable to allocate memory for frame duration");
+        Free_cRom();
+        return false;
+    }
+    MycRom.SpriteDescriptions = NULL;
+    MycRom.SpriteDetDwords = NULL;
+    MycRom.SpriteDetDwordPos = NULL;
+    MycRom.SpriteDetAreas = NULL;
+    MycRom.ColorRotations = (UINT8*)malloc(nF * 3 * MAX_COLOR_ROTATION);
+    if (!MycRom.ColorRotations)
+    {
+        cprintf("Unable to allocate memory for color rotations");
+        Free_cRom();
+        return false;
+    }
+    memset(MycRom.ColorRotations, 255, nF * 3 * MAX_COLOR_ROTATION);
+    MycRP.nSections = 0;
+    MycRom.nFrames = 0;
+    for (unsigned int tk = 0; tk < nFrames; tk++)
+    {
+        if (pFrames[tk].active == TRUE)
+        {
+            char* psFr = pFrames[tk].ptr;
+            UINT8* pdoFr = &MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * MycRom.nFrames];
+            UINT8* pdcFr = &MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * MycRom.nFrames];
+            if (tk < nFrames - 1)
+            {
+                UINT32 time1 = pFrames[tk].timecode;
+                UINT32 time2 = pFrames[tk + 1].timecode;
+                if (time2 < time1) MycRP.FrameDuration[MycRom.nFrames] = 0;
+                else if (time2 - time1 > 30000) MycRP.FrameDuration[MycRom.nFrames] = 0;
+                else MycRP.FrameDuration[MycRom.nFrames] = time2 - time1;
+            }
+            else MycRP.FrameDuration[MycRom.nFrames] = 0;
+            Init_cFrame_Palette(&MycRom.cPal[sizepalette * MycRom.nFrames]);
+            for (unsigned int tj = 0; tj < MycRom.fHeight * MycRom.fWidth; tj++)
+            {
+                *pdcFr = *pdoFr = (UINT8)(*psFr);
+                pdoFr++;
+                pdcFr++;
+                psFr++;
+            }
+            MycRom.nFrames++;
+        }
+    }
+    return true;
+}
+
+bool AddTXTFrames2Frame(UINT nFrames, sFrames* pFrames)
+{
+    // Add frames from a new txt file to the already 
+    // count remaining original frames
+    unsigned int nF = 0;
+    for (unsigned int ti = 0; ti < nFrames; ti++)
+    {
+        if (pFrames[ti].active == TRUE) nF++;
+    }
+    if (nF == 0) return true;
+    // reallocating cROM Frame space
+    MycRP.oFrames = (UINT8*)realloc(MycRP.oFrames, (nF + MycRom.nFrames) * sizeof(UINT8) * MycRom.fWidth * MycRom.fHeight);
+    if (!MycRP.oFrames)
+    {
+        cprintf("Unable to reallocate memory for original frames");
+        return false;
+    }
+    MycRom.HashCode = (UINT*)realloc(MycRom.HashCode, (nF + MycRom.nFrames) * sizeof(UINT));
+    if (!MycRom.HashCode)
+    {
+        Free_cRom();
+        cprintf("Unable to reallocate memory for hashcodes");
+        return false;
+    }
+    MycRom.ShapeCompMode = (UINT8*)realloc(MycRom.ShapeCompMode, nF + MycRom.nFrames);
+    if (!MycRom.ShapeCompMode)
+    {
+        Free_cRom();
+        cprintf("Unable to allocate memory for shape mode");
+        return false;
+    }
+    memset(&MycRom.ShapeCompMode[MycRom.nFrames], FALSE, nF);
+    MycRom.CompMaskID = (UINT8*)realloc(MycRom.CompMaskID, (nF + MycRom.nFrames) * sizeof(UINT8));
+    if (!MycRom.CompMaskID)
+    {
+        Free_cRom();
+        cprintf("Unable to reallocate memory for comparison masks");
+        return false;
+    }
+    memset(&MycRom.CompMaskID[MycRom.nFrames], 255, nF * sizeof(UINT8));
+    MycRom.MovRctID = (UINT8*)realloc(MycRom.MovRctID, (nF + MycRom.nFrames) * sizeof(UINT8));
+    if (!MycRom.MovRctID)
+    {
+        Free_cRom();
+        cprintf("Unable to reallocate memory for moving mask IDs");
+        return false;
+    }
+    memset(&MycRom.MovRctID[MycRom.nFrames], 255, nF * sizeof(UINT8));
+    // no need to reallocate CompMasks as the maximum is allocated from start
+    size_t sizepalette = MycRom.ncColors * 3;
+    MycRom.cPal = (UINT8*)realloc(MycRom.cPal, (nF + MycRom.nFrames) * sizepalette);
+    if (!MycRom.cPal)
+    {
+        Free_cRom();
+        cprintf("Unable to reallocate memory for colorized palettes");
+        return false;
+    }
+    MycRom.cFrames = (UINT8*)realloc(MycRom.cFrames, (nF + MycRom.nFrames) * (size_t)MycRom.fWidth * (size_t)MycRom.fHeight);
+    if (!MycRom.cFrames)
+    {
+        cprintf("Unable to reallocate memory for colorized frames");
+        Free_cRom();
+        return false;
+    }
+    MycRom.DynaMasks = (UINT8*)realloc(MycRom.DynaMasks, (nF + MycRom.nFrames) * (size_t)MycRom.fWidth * (size_t)MycRom.fHeight);
+    if (!MycRom.DynaMasks)
+    {
+        cprintf("Unable to reallocate memory for dynamic masks");
+        Free_cRom();
+        return false;
+    }
+    memset(&MycRom.DynaMasks[MycRom.nFrames * MycRom.fWidth * MycRom.fHeight], 255, nF * MycRom.fWidth * MycRom.fHeight);
+    MycRom.Dyna4Cols = (UINT8*)realloc(MycRom.Dyna4Cols, (nF + MycRom.nFrames) * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors);
+    if (!MycRom.Dyna4Cols)
+    {
+        cprintf("Unable to reallocate memory for dynamic color sets");
+        Free_cRom();
+        return false;
+    }
+    for (UINT tj = MycRom.nFrames; tj < MycRom.nFrames + nF; tj++)
+    {
+        for (UINT ti = 0; ti < MAX_DYNA_SETS_PER_FRAME; ti++)
+        {
+            for (UINT tk = 0; tk < MycRom.noColors; tk++) MycRom.Dyna4Cols[tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + ti * MycRom.noColors + tk] = (UINT8)(ti * MycRom.noColors + tk);
+        }
+    }
+    MycRom.FrameSprites = (UINT8*)realloc(MycRom.FrameSprites, (nF + MycRom.nFrames) * MAX_SPRITES_PER_FRAME);
+    if (!MycRom.FrameSprites)
+    {
+        cprintf("Unable to reallocate memory for sprite IDs");
+        Free_cRom();
+        return false;
+    }
+    memset(&MycRom.FrameSprites[MycRom.nFrames * MAX_SPRITES_PER_FRAME], 255, nF * MAX_SPRITES_PER_FRAME);
+    MycRom.TriggerID = (UINT32*)realloc(MycRom.TriggerID, (nF + MycRom.nFrames) * sizeof(UINT32));
+    if (!MycRom.TriggerID)
+    {
+        cprintf("Unable to reallocate memory for trigger IDs");
+        Free_cRom();
+        return false;
+    }
+    memset(&MycRom.TriggerID[MycRom.nFrames], 255, nF * sizeof(UINT32));
+    MycRom.ColorRotations = (UINT8*)realloc(MycRom.ColorRotations, (nF + MycRom.nFrames) * 3 * MAX_COLOR_ROTATION);
+    if (!MycRom.ColorRotations)
+    {
+        cprintf("Unable to reallocate memory for color rotations");
+        Free_cRom();
+        return false;
+    }
+    memset(&MycRom.ColorRotations[MycRom.nFrames * 3 * MAX_COLOR_ROTATION], 255, nF * 3 * MAX_COLOR_ROTATION);
+    MycRP.FrameDuration = (UINT32*)realloc(MycRP.FrameDuration, (nF + MycRom.nFrames) * sizeof(UINT32));
+    if (!MycRP.FrameDuration)
+    {
+        cprintf("Unable to reallocate memory for frame duration");
+        Free_cRom();
+        return false;
+    }
+    for (unsigned int tk = 0; tk < nFrames; tk++)
+    {
+        if (pFrames[tk].active == TRUE)
+        {
+            UINT8* psFr = (UINT8*)pFrames[tk].ptr;
+            UINT8* pdoFr = &MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * MycRom.nFrames];
+            UINT8* pdcFr = &MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * MycRom.nFrames];
+            if (tk < nFrames - 1)
+            {
+                UINT32 time1 = pFrames[tk].timecode;
+                UINT32 time2 = pFrames[tk + 1].timecode;
+                if (time2 < time1) MycRP.FrameDuration[MycRom.nFrames] = 0;
+                else if (time2 - time1 > 30000) MycRP.FrameDuration[MycRom.nFrames] = 0;
+                else MycRP.FrameDuration[MycRom.nFrames] = time2 - time1;
+            }
+            else MycRP.FrameDuration[MycRom.nFrames] = 0;
+            Init_cFrame_Palette(&MycRom.cPal[sizepalette * MycRom.nFrames]);
+            for (unsigned int tj = 0; tj < MycRom.fHeight * MycRom.fWidth; tj++)
+            {
+                *pdcFr = *pdoFr = *psFr;
+                pdoFr++;
+                pdcFr++;
+                psFr++;
+            }
+            MycRom.nFrames++;
+        }
+    }
+    return true;
+}
+
+void Load_TXT_File(void)
+{
+    char acDir[260];
+    GetCurrentDirectoryA(260, acDir);
+
+    char* TXTF_buffer = NULL; // Loaded 
+    size_t TXTF_buffer_len = 0;
+    unsigned int nFrames = 0; // number of frames inside the txt file
+    sFrames* pFrames = NULL; // txt file frame description
+
+    // Load a txt file as a base for a new project
+    OPENFILENAMEA ofn;
+    char szFile[260] = { 0 };
+
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrTitle = "Choose the initial TXT file";
+    ofn.hwndOwner = hWnd;
+    ofn.lpstrFile = szFile;
+    ofn.lpstrFile[0] = '\0';
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "Text (.txt)\0*.TXT\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrInitialDir = DumpDir;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    if (GetOpenFileNameA(&ofn) == TRUE)
+    {
+        strcpy_s(MycRP.SaveDir, 260, ofn.lpstrFile);
+        int i = (int)strlen(MycRP.SaveDir) - 1;
+        while ((i > 0) && (MycRP.SaveDir[i] != '\\')) i--;
+        MycRP.SaveDir[i + 1] = 0;
+        if (isLoadedProject)
+        {
+            if (MessageBox(hWnd, L"Confirm you want to close the current project and load a new one", L"Caution", MB_YESNO) == IDYES)
+            {
+                Free_Project();
+            }
+            else
+            {
+                SetCurrentDirectoryA(acDir);
+                return;
+            }
+        }
+        FILE* pfile;
+        if (fopen_s(&pfile, ofn.lpstrFile, "rb") != 0)
+        {
+            cprintf("Unable to open the file %s", ofn.lpstrFile);
+            SetCurrentDirectoryA(acDir);
+            return;
+        }
+        fseek(pfile, 0, SEEK_END);
+        TXTF_buffer_len = (size_t)ftell(pfile);
+        rewind(pfile);
+        TXTF_buffer = (char*)malloc(TXTF_buffer_len + 1);
+        if (!TXTF_buffer)
+        {
+            TXTF_buffer_len = 0;
+            cprintf("Unable to get the memory buffer for the TXT file");
+            fclose(pfile);
+            SetCurrentDirectoryA(acDir);
+            return;
+        }
+        size_t nread = fread_s(TXTF_buffer, TXTF_buffer_len + 1, 1, TXTF_buffer_len, pfile);
+        TXTF_buffer[TXTF_buffer_len] = 0;
+        fclose(pfile);
+        if (!Parse_TXT(ofn.lpstrFile, TXTF_buffer, TXTF_buffer_len, &pFrames, &nFrames))
+        {
+            free(TXTF_buffer);
+            SetCurrentDirectoryA(acDir);
+            return;
+        }
+        strcpy_s(MycRom.name, 64, ofn.lpstrFile);
+        unsigned int ti = 0;
+        size_t tj = strlen(MycRom.name) - 1;
+        while ((MycRom.name[tj] != '\\') && (MycRom.name[tj] != ':') && (tj > 0)) tj--;
+        if (tj > 0)
+        {
+            tj++;
+            while (MycRom.name[tj] != '.')
+            {
+                MycRom.name[ti] = MycRom.name[tj];
+                ti++;
+                tj++;
+            }
+        }
+        MycRom.name[ti] = 0;
+        strcpy_s(MycRP.name, 64, MycRom.name);
+        CompareFrames(nFrames, pFrames);
+        CopyTXTFrames2Frame(nFrames, pFrames);
+        free(TXTF_buffer);
+        free(pFrames);
+        nselframes = 1;
+        preframe = 0;
+        PreFrameInStrip = 0;
+        isLoadedProject = true;
+    }
+    SetCurrentDirectoryA(acDir);
+}
+
+void Add_TXT_File(void)
+{
+    char acDir[260];
+    GetCurrentDirectoryA(260, acDir);
+
+    char* TXTF_buffer = NULL; // Loaded 
+    size_t TXTF_buffer_len = 0;
+    unsigned int nFrames = 0; // number of frames inside the txt file
+    sFrames* pFrames = NULL; // txt file frame description
+
+    // Add frames to the project with a new txt file
+    OPENFILENAMEA ofn;
+    char szFile[260];
+
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lpstrTitle = "Choose the additional TXT file";
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hWnd;
+    ofn.lpstrFile = szFile;
+    ofn.lpstrFile[0] = '\0';
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "Text (.txt)\0*.TXT\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = MycRP.SaveDir;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    if (GetOpenFileNameA(&ofn) == TRUE)
+    {
+        FILE* pfile;
+        if (fopen_s(&pfile, ofn.lpstrFile, "rb") != 0)
+        {
+            cprintf("Unable to open the file %s", ofn.lpstrFile);
+            SetCurrentDirectoryA(acDir);
+            return;
+        }
+        fseek(pfile, 0, SEEK_END);
+        TXTF_buffer_len = (size_t)ftell(pfile);
+        rewind(pfile);
+        TXTF_buffer = (char*)malloc(TXTF_buffer_len + 1);
+        if (!TXTF_buffer)
+        {
+            TXTF_buffer_len = 0;
+            cprintf("Unable to get the memory buffer for the TXT file");
+            fclose(pfile);
+            SetCurrentDirectoryA(acDir);
+            return;
+        }
+        size_t nread = fread_s(TXTF_buffer, TXTF_buffer_len + 1, 1, TXTF_buffer_len, pfile);
+        TXTF_buffer[TXTF_buffer_len] = 0;
+        fclose(pfile);
+        if (!Parse_TXT(ofn.lpstrFile, TXTF_buffer, TXTF_buffer_len, &pFrames, &nFrames))
+        {
+            free(TXTF_buffer);
+            SetCurrentDirectoryA(acDir);
+            return;
+        }
+        CompareAdditionalFrames(nFrames, pFrames);
+        AddTXTFrames2Frame(nFrames, pFrames);
+        free(TXTF_buffer);
+        free(pFrames);
+    }
+    SetCurrentDirectoryA(acDir);
 }*/
-
-
 #pragma endregion Project_File_Functions
 
 
 #pragma region Window_Procs
 
-/*BOOL CALLBACK List_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    switch (message)
-    {
-        case WM_INITDIALOG:
-        {
-            SendMessage(GetDlgItem(hDlg, IDC_LIST), LB_RESETCONTENT, 0, 0);
-            int nfiles = 0;
-            get_file_list(MycRP.SaveDir, (char*)"*.cdump", GetDlgItem(hDlg, IDC_LIST), &nfiles);
-            if (nfiles == 0)
-            {
-                MessageBoxA(hWnd, "No cdump file found in the altcolor subdirectories", "Error", MB_OK);
-                EndDialog(hDlg, -1);
-                return 0;
-            }
-            return 0;
-        }
-        case WM_COMMAND:
-        {
-            switch (LOWORD(wParam))
-            {
-                case IDOK:
-                {
-                    EndDialog(hDlg, SendMessage(GetDlgItem(hDlg, IDC_LIST), LB_GETCURSEL, 0, 0));
-                    return TRUE;
-                }
-                case IDCANCEL:
-                {
-                    EndDialog(hDlg, -1);
-                    return TRUE;
-                }
-                default:
-                    return FALSE;
-            }
-        }
-        default:
-            return FALSE;
-    }
-    return TRUE;
-}*/
 
 LRESULT CALLBACK WndProc(HWND hWin, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
     {
-    case WM_COMMAND:
-    {
-        int wmId = LOWORD(wParam);
-        /*switch (wmId)
-        {
-        default:
-            return DefWindowProc(hWin, message, wParam, lParam);
-            break;
-        }*/
-    }
     case WM_GETMINMAXINFO:
     {
         MINMAXINFO* mmi = (MINMAXINFO*)lParam;
@@ -2363,6 +2872,13 @@ LRESULT CALLBACK WndProc(HWND hWin, UINT message, WPARAM wParam, LPARAM lParam)
     return 0;
 }
 
+void ResetMove(void)
+{
+    ChooseMove = false;
+    WhiteMoveButton = true;
+    SetIcon(GetDlgItem(hwTB, IDC_MOVEFRAMES), IDI_MOVEFRAME);
+}
+
 bool isSReleased = false, isEnterReleased = false, isZReleased = false, isYReleased = false, isMReleased = false, isAReleased = false, isCReleased = false, isVReleased = false, isFReleased = false, isDReleased = false, isEReleased = false;
 
 void CheckAccelerators(void)
@@ -2382,6 +2898,7 @@ void CheckAccelerators(void)
     {
         if (MycRom.name[0])
         {
+            if ((GetKeyState(VK_ESCAPE) & 0x8000) && ChooseMove) ResetMove();
             if (GetKeyState(VK_CONTROL) & 0x8000)
             {
                 if ((isSReleased) && (GetKeyState('S') & 0x8000))
@@ -2440,13 +2957,6 @@ void mouse_scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
     if (PreFrameInStrip < 0) PreFrameInStrip = 0;
     if (PreFrameInStrip >= (int)MycRom.nFrames) PreFrameInStrip = (int)MycRom.nFrames - 1;
     UpdateFSneeded = true;
-}
-
-void ResetMove(void)
-{
-    ChooseMove = false;
-    WhiteMoveButton = true;
-    SetIcon(GetDlgItem(hwTB, IDC_MOVEFRAMES), IDI_MOVEFRAME);
 }
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
@@ -2657,7 +3167,6 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
                     GetOpenFileNameA(&ofn);
                     Load_cDump(ofn.lpstrFile);
-                    //}
                     return TRUE;
                 }
                 case IDC_ADDCDUMP:
@@ -2680,6 +3189,14 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
                     GetOpenFileNameA(&ofn);
                     Add_cDump(ofn.lpstrFile);
+                    return TRUE;
+                }
+                case IDC_OPENTXT:
+                {
+                    return TRUE;
+                }
+                case IDC_ADDTXT:
+                {
                     return TRUE;
                 }
                 case IDC_OPENCROM:
@@ -2707,6 +3224,12 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                         Load_cRP(ofn.lpstrFile);
                     }
                     UpdateSectionList();
+                    return TRUE;
+                }
+                case IDC_SAVECROM:
+                {
+                    Save_cRP(MycRP.SaveDir);
+                    Save_cRom(MycRP.SaveDir);
                     return TRUE;
                 }
                 case IDC_VPMPATH:
