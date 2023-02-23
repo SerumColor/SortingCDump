@@ -45,16 +45,29 @@ bool fDone = false;
 
 bool ChooseMove = false;
 bool WhiteMoveButton = true;
+bool isLoadedProject = false;
 
 //UINT acFrame = 0, prevFrame = 0;
-UINT preframe = 0, nselframes = 1;
+
+//UINT preframe = 0, nselframes = 1;
+
+typedef struct
+{
+    UINT preframe;
+    UINT nselframes;
+}sSelection;
+
+#define MAX_SELECTIONS 256
+sSelection selections[MAX_SELECTIONS] = { 0,1 };
+UINT acframe = 0;
+UINT nselections = 1;
 
 cRom_struct MycRom = { "",0,0,0,0,0,NULL,NULL,NULL,NULL,NULL,NULL,NULL };
 cRP_struct MycRP = { "",{FALSE},{0},0,0,{0},FALSE,0,FALSE };
 
 UINT TxFrameStripo[2] = { (UINT)-1, (UINT)-1 }; // Framebuffer texture for the strip displaying the original frames ID
 UINT TxFrameStripc[2] = { (UINT)-1, (UINT)-1 }; // Framebuffer texture for the strip displaying the colorized frames ID
-UINT TxChiffres, TxcRom; // Number texture ID
+UINT TxChiffres, TxcRom, TxcRom2; // Number texture ID
 UINT acFSoText = 0; // current texture displayed on the original frame strip
 UINT acFScText = 0; // current texture displayed on the colorized frame strip
 UINT8 Raw_Digit_Def[RAW_DIGIT_W * RAW_DIGIT_H * 10]; // buffer for raw numbers
@@ -72,6 +85,7 @@ UINT FS_LMargin = 0;    // left margin (same as right) before the first frame in
 //unsigned int nSelFrames = 1; // number of selected frames
 #define MAX_SEL_FRAMES 8192 // Max number of selected frames (has consequences on the undo/redo buffer size!)
 //unsigned int SelFrames[MAX_SEL_FRAMES]={0}; // list of selected frames
+const UINT8 AcColor[3] = { 255,255,255 };
 const UINT8 SelColor[3] = { 100,150,255 };
 const UINT8 UnselColor[3] = { 255,50,50 };
 
@@ -89,17 +103,17 @@ bool UpdateSSneeded = false; // Do we need to update the sprite strip
 
 #pragma region Frame_Actions
 
-UINT New_Frame_Moved_Pos(UINT nofr, UINT nofrins)
+UINT New_Frame_Moved_Pos(UINT nofr, UINT nofrins, UINT nosel)
 {
-    if (((nofr < nofrins) && (nofr < preframe)) || ((nofr > nofrins) && (nofr >= preframe + nselframes))) return nofr;
-    if (nofrins > preframe + nselframes)
+    if (((nofr < nofrins) && (nofr < selections[nosel].preframe)) || ((nofr > nofrins) && (nofr >= selections[nosel].preframe + selections[nosel].nselframes))) return nofr;
+    if (nofrins > selections[nosel].preframe + selections[nosel].nselframes)
     {
         if (nofr == nofrins) return nofrins;
-        if ((nofr >= preframe) && (nofr < preframe + nselframes)) return nofr + nofrins - preframe - nselframes;
-        return nofr - nselframes;
+        if ((nofr >= selections[nosel].preframe) && (nofr < selections[nosel].preframe + selections[nosel].nselframes)) return nofr + nofrins - selections[nosel].preframe - selections[nosel].nselframes;
+        return nofr - selections[nosel].nselframes;
     }
-    if ((nofr >= preframe) && (nofr < preframe + nselframes)) return nofr - preframe + nofrins;
-    return nofr + nselframes;
+    if ((nofr >= selections[nosel].preframe) && (nofr < selections[nosel].preframe + selections[nosel].nselframes)) return nofr - selections[nosel].preframe + nofrins;
+    return nofr + selections[nosel].nselframes;
 }
 
 UINT New_Frame_Del_Pos(UINT nofr, UINT predel, UINT ndel)
@@ -109,55 +123,55 @@ UINT New_Frame_Del_Pos(UINT nofr, UINT predel, UINT ndel)
     return nofr - ndel;
 }
 
-bool Move_Parts(UINT nofrins, UINT8* buffer, UINT size_unit, UINT size_val)
+bool Move_Parts(UINT nofrins, UINT8* buffer, UINT size_unit, UINT size_val, UINT nosel)
 {
-    UINT8* ptbuf = (UINT8*)malloc(nselframes * size_unit * size_val);
+    UINT8* ptbuf = (UINT8*)malloc(selections[nosel].nselframes * size_unit * size_val);
     if (!ptbuf)
     {
         MessageBoxA(hWnd, "Can't get memory for parts moving", "Error", MB_OK);
         return false;
     }
-    memcpy(ptbuf, &buffer[preframe * size_unit * size_val], nselframes * size_unit * size_val);
-    if (nofrins < preframe)
+    memcpy(ptbuf, &buffer[selections[nosel].preframe * size_unit * size_val], selections[nosel].nselframes * size_unit * size_val);
+    if (nofrins < selections[nosel].preframe)
     {
-        memmove(&buffer[(nofrins + nselframes) * size_unit * size_val], &buffer[nofrins * size_unit * size_val], (preframe - nofrins) * size_unit * size_val);
-        memcpy(&buffer[nofrins * size_unit * size_val], ptbuf, nselframes * size_unit * size_val);
+        memmove(&buffer[(nofrins + selections[nosel].nselframes) * size_unit * size_val], &buffer[nofrins * size_unit * size_val], (selections[nosel].preframe - nofrins) * size_unit * size_val);
+        memcpy(&buffer[nofrins * size_unit * size_val], ptbuf, selections[nosel].nselframes * size_unit * size_val);
     }
     else
     {
-        memmove(&buffer[preframe * size_unit * size_val], &buffer[(preframe + nselframes) * size_unit * size_val], (nofrins - preframe - nselframes) * size_unit * size_val);
-        memcpy(&buffer[(nofrins - nselframes) * size_unit * size_val], ptbuf, nselframes * size_unit * size_val);
+        memmove(&buffer[selections[nosel].preframe * size_unit * size_val], &buffer[(selections[nosel].preframe + selections[nosel].nselframes) * size_unit * size_val], (nofrins - selections[nosel].preframe - selections[nosel].nselframes) * size_unit * size_val);
+        memcpy(&buffer[(nofrins - selections[nosel].nselframes) * size_unit * size_val], ptbuf, selections[nosel].nselframes * size_unit * size_val);
     }
     free(ptbuf);
     return true;
 }
 
-void Move_Frames(UINT nofrins)
+void Move_Frames(UINT nofrins, UINT nosel)
 {
-    if ((nofrins >= preframe) && (nofrins < preframe + nselframes))
+    if ((nofrins >= selections[nosel].preframe) && (nofrins < selections[nosel].preframe + selections[nosel].nselframes))
     {
         MessageBoxA(hWnd, "Can't move the selection in the selection", "Error", MB_OK);
         return;
     }
-    if (nofrins == preframe + nselframes) return;
+    if (nofrins == selections[nosel].preframe + selections[nosel].nselframes) return;
     // nofrins = frame to move the selection before
-    Move_Parts(nofrins, MycRom.cFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
-    Move_Parts(nofrins, (UINT8*)MycRom.HashCode, 1, sizeof(UINT32));
-    Move_Parts(nofrins, MycRom.CompMaskID, 1, sizeof(UINT8));
-    Move_Parts(nofrins, MycRom.ShapeCompMode, 1, sizeof(UINT8));
-    Move_Parts(nofrins, MycRom.MovRctID, 1, sizeof(UINT8));
-    Move_Parts(nofrins, MycRom.cPal, 3 * MycRom.ncColors, sizeof(UINT8));
-    Move_Parts(nofrins, MycRom.DynaMasks, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
-    Move_Parts(nofrins, MycRom.Dyna4Cols, MycRom.noColors * MAX_DYNA_SETS_PER_FRAME, sizeof(UINT8));
-    Move_Parts(nofrins, MycRom.FrameSprites, MAX_SPRITES_PER_FRAME, sizeof(UINT8));
-    Move_Parts(nofrins, MycRom.ColorRotations, 3 * MAX_COLOR_ROTATION, sizeof(UINT8));
-    Move_Parts(nofrins, (UINT8*)MycRom.TriggerID, 1, sizeof(UINT32));
-    Move_Parts(nofrins, MycRP.oFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
-    Move_Parts(nofrins, (UINT8*)MycRP.FrameDuration, 1, sizeof(UINT32));
+    Move_Parts(nofrins, MycRom.cFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, (UINT8*)MycRom.HashCode, 1, sizeof(UINT32), nosel);
+    Move_Parts(nofrins, MycRom.CompMaskID, 1, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, MycRom.ShapeCompMode, 1, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, MycRom.MovRctID, 1, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, MycRom.cPal, 3 * MycRom.ncColors, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, MycRom.DynaMasks, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, MycRom.Dyna4Cols, MycRom.noColors * MAX_DYNA_SETS_PER_FRAME, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, MycRom.FrameSprites, MAX_SPRITES_PER_FRAME, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, MycRom.ColorRotations, 3 * MAX_COLOR_ROTATION, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, (UINT8*)MycRom.TriggerID, 1, sizeof(UINT32), nosel);
+    Move_Parts(nofrins, MycRP.oFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8), nosel);
+    Move_Parts(nofrins, (UINT8*)MycRP.FrameDuration, 1, sizeof(UINT32), nosel);
     // correct the first section frame
-    for (UINT ti = 0; ti < MycRP.nSections; ti++) MycRP.Section_Firsts[ti] = New_Frame_Moved_Pos(MycRP.Section_Firsts[ti], nofrins);
+    for (UINT ti = 0; ti < MycRP.nSections; ti++) MycRP.Section_Firsts[ti] = New_Frame_Moved_Pos(MycRP.Section_Firsts[ti], nofrins, nosel);
     // correct the sprite frame reference
-    for (UINT ti = 0; ti < MycRom.nSprites; ti++) MycRP.Sprite_Col_From_Frame[ti] = New_Frame_Moved_Pos(MycRP.Sprite_Col_From_Frame[ti], nofrins);
+    for (UINT ti = 0; ti < MycRom.nSprites; ti++) MycRP.Sprite_Col_From_Frame[ti] = New_Frame_Moved_Pos(MycRP.Sprite_Col_From_Frame[ti], nofrins, nosel);
     UpdateFSneeded = true;
 }
 
@@ -173,7 +187,7 @@ void UpdateSectionList(void)
     for (UINT32 ti = 0; ti < MycRP.nSections; ti++)
     {
         char tbuf[256];
-        sprintf_s(tbuf, 256, "%i - %s", ti, &MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
+        sprintf_s(tbuf, 256, "%i - %s", ti + 1, &MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
         SendMessageA(hlst, CB_ADDSTRING, 0, (LPARAM)tbuf);
     }
 }
@@ -304,14 +318,14 @@ void Del_Section(UINT nsec)
     MycRP.nSections--;
 }
 
-void Del_Frames(void)
+void Del_Frames(UINT nosel)
 {
-    if (preframe + nselframes > MycRom.nFrames) return;
+    if (selections[nosel].preframe + selections[nosel].nselframes > MycRom.nFrames) return;
     // we first check the sections and sprites pointing to these frames
     nfs = 0;
     for (UINT ti = 0; ti < MycRP.nSections; ti++)
     {
-        if ((MycRP.Section_Firsts[ti] >= preframe) && (MycRP.Section_Firsts[ti] < preframe + nselframes))
+        if ((MycRP.Section_Firsts[ti] >= selections[nosel].preframe) && (MycRP.Section_Firsts[ti] < selections[nosel].preframe + selections[nosel].nselframes))
         {
             isFirstSection[nfs] = ti;
             nfs++;
@@ -320,7 +334,7 @@ void Del_Frames(void)
     nubs = 0;
     for (UINT ti = 0; ti < MycRom.nSprites; ti++)
     {
-        if ((MycRP.Sprite_Col_From_Frame[ti] >= preframe) && (MycRP.Sprite_Col_From_Frame[ti] < preframe + nselframes))
+        if ((MycRP.Sprite_Col_From_Frame[ti] >= selections[nosel].preframe) && (MycRP.Sprite_Col_From_Frame[ti] < selections[nosel].preframe + selections[nosel].nselframes))
         {
             isUsedBySprite[nubs] = ti;
             nubs++;
@@ -332,7 +346,7 @@ void Del_Frames(void)
         if (dbres == 0) return; // delete cancelled
         else if (dbres == 1) // delete all and their related sprites and sections
         {
-            Del_Frame_Range(preframe, nselframes);
+            Del_Frame_Range(selections[nosel].preframe, selections[nosel].nselframes);
             for (UINT ti = 0; ti < nfs; ti++) Del_Section(isFirstSection[ti]);
             for (UINT ti = 0; ti < nubs; ti++) Del_Sprite(isUsedBySprite[ti]);
         }
@@ -340,31 +354,28 @@ void Del_Frames(void)
         {
             UINT pfr, nfr;
             UINT ti = 0;
-            while (ti < nselframes)
+            while (ti < selections[nosel].nselframes)
             {
-                while (((is_Section_Pointed(preframe + ti)) || (is_Sprite_Pointed(preframe + ti))) && (ti < nselframes)) ti++;
-                if (ti == nselframes) break;
-                pfr = ti + preframe;
+                while (((is_Section_Pointed(selections[nosel].preframe + ti)) || (is_Sprite_Pointed(selections[nosel].preframe + ti))) && (ti < selections[nosel].nselframes)) ti++;
+                if (ti == selections[nosel].nselframes) break;
+                pfr = ti + selections[nosel].preframe;
                 nfr = 0;
-                while (((!is_Section_Pointed(preframe + ti)) && (!is_Sprite_Pointed(preframe + ti))) && (ti < nselframes))
+                while (((!is_Section_Pointed(selections[nosel].preframe + ti)) && (!is_Sprite_Pointed(selections[nosel].preframe + ti))) && (ti < selections[nosel].nselframes))
                 {
                     nfr++;
                     ti++;
                 }
                 Del_Frame_Range(pfr, nfr);
-                nselframes -= nfr;
+                selections[nosel].nselframes -= nfr;
                 ti -= nfr;
             }
         }
     }
-    else Del_Frame_Range(preframe, nselframes);
+    else Del_Frame_Range(selections[nosel].preframe, selections[nosel].nselframes);
     UpdateFSneeded = true;
-    nselframes = 1;
-    if (preframe >= MycRom.nFrames)
-    {
-        preframe = MycRom.nFrames - 1;
-        PreFrameInStrip = preframe;
-    }
+    selections[nosel].nselframes = 1;
+    if (selections[nosel].preframe >= MycRom.nFrames) selections[nosel].preframe = MycRom.nFrames - 1;
+    PreFrameInStrip = max((int)selections[nosel].preframe - 1, 0);
 }
 
 #pragma endregion Frame_Actions
@@ -539,12 +550,6 @@ void Draw_Fill_Rectangle_Text(GLFWwindow* glfwin, int ix, int iy, int fx, int fy
     glEnd();
     glDisable(GL_BLEND);
     glDisable(GL_TEXTURE_2D);
-}
-
-void Display_Avancement(GLFWwindow* glfwin, float avancement)
-{
-    Draw_Fill_Rectangle_Text(glfwin, 0, 0, (int)(ScrW * avancement), ScrH, TxcRom, 0, avancement, 0, 2.15f);
-    gl33_SwapBuffers(glfwin, false);
 }
 
 void Draw_Raw_Digit(UINT8 digit, UINT x, UINT y, UINT8* pbuf, UINT width, UINT height)
@@ -1031,7 +1036,10 @@ void CalcPosSlider(void)
 
 bool isFrameSelected(UINT noFr)   // return false if the frame is not selected, the position in the selection list if already selected
 {
-    if ((noFr >= min(preframe, preframe + nselframes - 1)) && (noFr <= max(preframe, preframe + nselframes - 1))) return true;
+    for (UINT nosel = 0; nosel < nselections; nosel++)
+    {
+        if ((noFr >= min(selections[nosel].preframe, selections[nosel].preframe + selections[nosel].nselframes - 1)) && (noFr <= max(selections[nosel].preframe, selections[nosel].preframe + selections[nosel].nselframes - 1))) return true;
+    }
     return false;
 }
 
@@ -1056,11 +1064,19 @@ void Get_Frame_Strip_Line_Color(UINT pos)
     UINT cornextframe = (int)((float)(pos - FRAME_STRIP_SLIDER_MARGIN + 1) * (float)MycRom.nFrames / (float)SliderWidth);
     if (cornextframe == corframe) cornextframe++;
     bool issel = false;
+    bool isac = false;
     for (UINT ti = corframe; ti < cornextframe; ti++)
     {
+        if (ti == acframe) isac = true;
         if (isFrameSelected(ti)) issel = true;
     }
-    if (issel == true)
+    if (isac == true)
+    {
+        draw_color[0] = AcColor[0];
+        draw_color[1] = AcColor[1];
+        draw_color[2] = AcColor[2];
+    }
+    else if (issel == true)
     {
         draw_color[0] = SelColor[0];
         draw_color[1] = SelColor[1];
@@ -1114,7 +1130,13 @@ void Frame_Strip_Updateo(void)
             pstrip += (fwid + FRAME_STRIP_W_MARGIN) * 4;
             continue;
         }
-        if (isFrameSelected(PreFrameInStrip + ti))
+        if (PreFrameInStrip + ti == acframe)
+        {
+            frFrameColor[0] = AcColor[0];
+            frFrameColor[1] = AcColor[1];
+            frFrameColor[2] = AcColor[2];
+        }
+        else if (isFrameSelected(PreFrameInStrip + ti))
         {
             frFrameColor[0] = SelColor[0];
             frFrameColor[1] = SelColor[1];
@@ -1207,7 +1229,7 @@ void Frame_Strip_Updatec(void)
     if (MycRom.name[0] == 0) return;
     bool doublepixsize = true;
     if (MycRom.fHeight == 64) doublepixsize = false;
-    UINT8* pfr, * pcol, * pstrip, * psmem, * psmem2;// , * pfro;
+    UINT8* pfr, * pcol, * pstrip, * psmem, * psmem2, * pfro, * pmask;
     UINT addrow = ScrW * 4;
     pstrip = pFramecStrip + FS_LMargin * 4 + FRAME_STRIP_H_MARGIN_C * addrow;
     UINT8 frFrameColor[3] = { 255,255,255 };
@@ -1223,7 +1245,13 @@ void Frame_Strip_Updatec(void)
             pstrip += (fwid + FRAME_STRIP_W_MARGIN) * 4;
             continue;
         }
-        if (isFrameSelected(PreFrameInStrip + ti))
+        if (PreFrameInStrip + ti == acframe)
+        {
+            frFrameColor[0] = AcColor[0];
+            frFrameColor[1] = AcColor[1];
+            frFrameColor[2] = AcColor[2];
+        }
+        else if (isFrameSelected(PreFrameInStrip + ti))
         {
             frFrameColor[0] = SelColor[0];
             frFrameColor[1] = SelColor[1];
@@ -1251,7 +1279,8 @@ void Frame_Strip_Updatec(void)
         }
         pfr = &MycRom.cFrames[(PreFrameInStrip + ti) * MycRom.fWidth * MycRom.fHeight];
         pcol = &MycRom.cPal[(PreFrameInStrip + ti) * MycRom.ncColors * 3];
-        //pfro = &MycRP.oFrames[(PreFrameInStrip + ti) * MycRom.fWidth * MycRom.fHeight];
+        pmask = &MycRom.DynaMasks[(PreFrameInStrip + ti) * MycRom.fWidth * MycRom.fHeight];
+        pfro = &MycRP.oFrames[(PreFrameInStrip + ti) * MycRom.fWidth * MycRom.fHeight];
 
 
         psmem = pstrip;
@@ -1260,9 +1289,18 @@ void Frame_Strip_Updatec(void)
             psmem2 = pstrip;
             for (UINT tk = 0; tk < MycRom.fWidth; tk++)
             {
-                pstrip[0] = pcol[3 * (*pfr)];
-                pstrip[1] = pcol[3 * (*pfr) + 1];
-                pstrip[2] = pcol[3 * (*pfr) + 2];
+                if ((*pmask) != 255)
+                {
+                    pstrip[0] = pcol[3 * MycRom.Dyna4Cols[((PreFrameInStrip + ti) * MAX_DYNA_SETS_PER_FRAME + (*pmask)) * MycRom.noColors + (*pfro)]];
+                    pstrip[1] = pcol[3 * MycRom.Dyna4Cols[((PreFrameInStrip + ti) * MAX_DYNA_SETS_PER_FRAME + (*pmask)) * MycRom.noColors + (*pfro)] + 1];
+                    pstrip[2] = pcol[3 * MycRom.Dyna4Cols[((PreFrameInStrip + ti) * MAX_DYNA_SETS_PER_FRAME + (*pmask)) * MycRom.noColors + (*pfro)] + 2];
+                }
+                else
+                {
+                    pstrip[0] = pcol[3 * (*pfr)];
+                    pstrip[1] = pcol[3 * (*pfr) + 1];
+                    pstrip[2] = pcol[3 * (*pfr) + 2];
+                }
                 pstrip[3] = 255;
                 if (doublepixsize)
                 {
@@ -1274,7 +1312,8 @@ void Frame_Strip_Updatec(void)
                 }
                 pstrip += 4;
                 pfr++;
-                //pfro++;
+                pfro++;
+                pmask++;
             }
             pstrip = psmem2 + addrow;
             if (doublepixsize) pstrip += addrow;
@@ -1447,8 +1486,9 @@ void Free_Project(void)
 
 void Delete_Duplicate_Frame(void)
 {
-    preframe = 0;
-    nselframes = 1;
+    selections[0].preframe = 0;
+    selections[0].nselframes = 1;
+    nselections = 1;
 
     int* pDelete = (int*)malloc(MycRom.nFrames * sizeof(int));
     if (!pDelete) return;
@@ -1515,6 +1555,7 @@ void Delete_Duplicate_Frame(void)
     MycRom.TriggerID = (UINT32*)realloc(MycRom.TriggerID, tl * sizeof(UINT32));
     MycRP.oFrames = (UINT8*)realloc(MycRP.oFrames, tl * fsize);
     MycRP.FrameDuration = (UINT32*)realloc(MycRP.FrameDuration, tl * sizeof(UINT32));
+    cprintf("%i frames deleted as duplicate, %i frames remaining", nDeleted,MycRom.nFrames);
     UpdateFSneeded = true;
 }
 
@@ -1546,49 +1587,44 @@ bool Save_cRom(char* path)
     fwrite(&MycRom.nFrames, sizeof(UINT), 1, pfile);
     fwrite(&MycRom.noColors, sizeof(UINT), 1, pfile);
     fwrite(&MycRom.ncColors, sizeof(UINT), 1, pfile);
-    MycRom.nCompMasks = 0;
     fwrite(&MycRom.nCompMasks, sizeof(UINT), 1, pfile);
-    MycRom.nMovMasks = 0;
     fwrite(&MycRom.nMovMasks, sizeof(UINT), 1, pfile);
-    MycRom.nSprites = 0;
     fwrite(&MycRom.nSprites, sizeof(UINT), 1, pfile);
     fwrite(MycRom.HashCode, sizeof(UINT), MycRom.nFrames, pfile);
-    for (unsigned int ti = 0; ti < MycRom.nFrames; ti++)
-    {
-        MycRom.ShapeCompMode[ti] = 0;
-        MycRom.CompMaskID[ti] = 255;
-        MycRom.MovRctID[ti] = 255;
-        MycRom.TriggerID[ti] = 0xFFFFFFFF;
-        for (unsigned int tj = 0; tj < MycRom.fWidth * MycRom.fHeight; tj++) MycRom.DynaMasks[ti * MycRom.fWidth * MycRom.fHeight + tj] = 255;
-        for (unsigned int tj = 0; tj < MAX_DYNA_SETS_PER_FRAME * MycRom.noColors; tj++) MycRom.Dyna4Cols[ti * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + tj] = tj % MAX_DYNA_SETS_PER_FRAME;
-        for (unsigned int tj = 0; tj < MAX_SPRITES_PER_FRAME; tj++) MycRom.FrameSprites[ti * MAX_SPRITES_PER_FRAME + tj] = 255;
-        for (unsigned int tj = 0; tj < 3 * MAX_COLOR_ROTATION; tj++) MycRom.FrameSprites[ti * 3 * MAX_COLOR_ROTATION + tj] = 255;
-    }
     fwrite(MycRom.ShapeCompMode, 1, MycRom.nFrames, pfile);
     fwrite(MycRom.CompMaskID, 1, MycRom.nFrames, pfile);
     fwrite(MycRom.MovRctID, 1, MycRom.nFrames, pfile);
+    if (MycRom.nCompMasks) fwrite(MycRom.CompMasks, 1, MycRom.nCompMasks * MycRom.fWidth * MycRom.fHeight, pfile);
+    if (MycRom.nMovMasks) fwrite(MycRom.MovRcts, 1, MycRom.nMovMasks * 4, pfile);
     fwrite(MycRom.cPal, 1, MycRom.nFrames * 3 * MycRom.ncColors, pfile);
     fwrite(MycRom.cFrames, 1, MycRom.nFrames * MycRom.fWidth * MycRom.fHeight, pfile);
     fwrite(MycRom.DynaMasks, 1, MycRom.nFrames * MycRom.fWidth * MycRom.fHeight, pfile);
     fwrite(MycRom.Dyna4Cols, 1, MycRom.nFrames * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors, pfile);
     fwrite(MycRom.FrameSprites, 1, MycRom.nFrames * MAX_SPRITES_PER_FRAME, pfile);
+    fwrite(MycRom.SpriteDescriptions, sizeof(UINT16), MycRom.nSprites * MAX_SPRITE_SIZE * MAX_SPRITE_SIZE, pfile);
     for (UINT ti = 0; ti < MycRom.nFrames; ti++) pactiveframes[ti] = 1;
     fwrite(pactiveframes, 1, MycRom.nFrames, pfile);
     free(pactiveframes);
     fwrite(MycRom.ColorRotations, 1, 3 * MAX_COLOR_ROTATION * MycRom.nFrames, pfile);
+    fwrite(MycRom.SpriteDetDwords, sizeof(UINT32), MycRom.nSprites * MAX_SPRITE_DETECT_AREAS, pfile);
+    fwrite(MycRom.SpriteDetDwordPos, sizeof(UINT16), MycRom.nSprites * MAX_SPRITE_DETECT_AREAS, pfile);
+    fwrite(MycRom.SpriteDetAreas, sizeof(UINT16), MycRom.nSprites * 4 * MAX_SPRITE_DETECT_AREAS, pfile);
     fwrite(MycRom.TriggerID, sizeof(UINT32), MycRom.nFrames, pfile);
     fclose(pfile);
+    cprintf("Serum file %s saved successfully", tbuf);
     return true;
 }
 
 bool Load_cRom(char* name)
 {
+    Free_cRom();
     FILE* pfile;
     if (fopen_s(&pfile, name, "rb") != 0)
     {
         AffLastError((char*)"Load_cRom:fopen_s");
         return false;
     }
+    cprintf("\r\n----------------------------------\r\n");
     fread(MycRom.name, 1, 64, pfile);
     UINT lengthheader;
     fread(&lengthheader, sizeof(UINT), 1, pfile);
@@ -1665,201 +1701,10 @@ bool Load_cRom(char* name)
         }
     }
     fclose(pfile);
+    cprintf("Serum file %s with %i frames loaded successfully", name, MycRom.nFrames);
     UpdateFSneeded = true;
     return true;
 }
-
-/*bool Add_cRom(char* name)
-{
-    FILE* pfile,* pfile2;
-    if (fopen_s(&pfile, name, "rb") != 0)
-    {
-        AffLastError((char*)"Add_cRom:fopen_s");
-        return false;
-    }
-    char tbuf[MAX_PATH];
-    strcpy_s(tbuf, MAX_PATH, name);
-    tbuf[strlen(tbuf) - 2] = 'P';
-    tbuf[strlen(tbuf) - 1] = 0;
-    if (fopen_s(&pfile2, tbuf, "rb") != 0)
-    {
-        fclose(pfile);
-        AffLastError((char*)"Add_cRP:fopen_s");
-        return false;
-    }
-
-    fread(tbuf, 1, 64, pfile);
-    if (strcmp(tbuf, MycRom.name) != 0)
-    {
-        MessageBoxA(hWnd, "The rom name is different, this file can't be added", "Error", MB_OK);
-        fclose(pfile);
-        return false;
-    }
-    UINT lengthheader,tvar,tnframes,tnmasks,tnmmasks,tnsprites;
-    fread(&lengthheader, sizeof(UINT), 1, pfile);
-    fread(&tvar, sizeof(UINT), 1, pfile);
-    if (tvar != MycRom.fWidth)
-    {
-        MessageBoxA(hWnd, "The rom width is different, this file can't be added", "Error", MB_OK);
-        fclose(pfile);
-        return false;
-    }
-    fread(&tvar, sizeof(UINT), 1, pfile);
-    if (tvar != MycRom.fHeight)
-    {
-        MessageBoxA(hWnd, "The rom height is different, this file can't be added", "Error", MB_OK);
-        fclose(pfile);
-        return false;
-    }
-    fread(&tnframes, sizeof(UINT), 1, pfile);
-    fread(&tvar, sizeof(UINT), 1, pfile);
-    fread(&tvar, sizeof(UINT), 1, pfile);
-    fread(&tnmasks, sizeof(UINT), 1, pfile);
-    fread(&tnmmasks, sizeof(UINT), 1, pfile);
-    fread(&tnsprites, sizeof(UINT), 1, pfile);
-    MycRom.HashCode = (UINT*)realloc(MycRom.HashCode, sizeof(UINT) * (MycRom.nFrames + tnframes));
-    MycRom.ShapeCompMode = (UINT8*)realloc(MycRom.ShapeCompMode, MycRom.nFrames + MycRom.nFrames);
-    MycRom.CompMaskID = (UINT8*)realloc(MycRom.CompMaskID, MycRom.nFrames + MycRom.nFrames);
-    MycRom.MovRctID = (UINT8*)realloc(MycRom.MovRctID, MycRom.nFrames + MycRom.nFrames);
-    UINT8* tCompMasks=(UINT8*)malloc(MAX_MASKS * MycRom.fWidth * MycRom.fHeight);
-    if (tnmmasks>0) UINT8* tCompMasks = (UINT8*)malloc(tnmmasks * 4);
-    MycRom.cPal = (UINT8*)realloc(MycRom.cPal, (MycRom.nFrames + tnframes) * 3 * MycRom.ncColors);
-    MycRom.cFrames = (UINT8*)realloc(MycRom.cFrames, (MycRom.nFrames + tnframes) * MycRom.fWidth * MycRom.fHeight);
-    MycRom.DynaMasks = (UINT8*)realloc(MycRom.DynaMasks, (MycRom.nFrames + tnframes) * MycRom.fWidth * MycRom.fHeight);
-    MycRom.Dyna4Cols = (UINT8*)realloc(MycRom.Dyna4Cols, (MycRom.nFrames + tnframes) * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors);
-    MycRom.FrameSprites = (UINT8*)realloc(MycRom.FrameSprites, (MycRom.nFrames + tnframes) * MAX_SPRITES_PER_FRAME);
-    MycRom.SpriteDescriptions = (UINT16*)realloc(MycRom.SpriteDescriptions, (tnsprites + MycRom.nSprites) * MAX_SPRITE_SIZE * MAX_SPRITE_SIZE * sizeof(UINT16));
-    MycRom.ColorRotations = (UINT8*)realloc(MycRom.ColorRotations, (MycRom.nFrames + tnframes) * 3 * MAX_COLOR_ROTATION);
-    MycRom.SpriteDetDwords = (UINT32*)realloc(MycRom.SpriteDetDwords, (tnsprites + MycRom.nSprites) * sizeof(UINT32) * MAX_SPRITE_DETECT_AREAS);
-    MycRom.SpriteDetDwordPos = (UINT16*)realloc(MycRom.SpriteDetDwordPos, (tnsprites + MycRom.nSprites) * sizeof(UINT16) * MAX_SPRITE_DETECT_AREAS);
-    MycRom.SpriteDetAreas = (UINT16*)realloc(MycRom.SpriteDetAreas, (tnsprites + MycRom.nSprites) * sizeof(UINT16) * MAX_SPRITE_DETECT_AREAS * 4);
-    MycRom.TriggerID = (UINT32*)realloc(MycRom.TriggerID, (MycRom.nFrames + tnframes) * sizeof(UINT32));
-    if ((!MycRom.ShapeCompMode) || (!MycRom.HashCode) || (!MycRom.CompMaskID) || (!MycRom.MovRctID) || (!tCompMasks) ||
-        (!MycRom.MovRcts) || (!MycRom.cPal) || (!MycRom.cFrames) || (!MycRom.DynaMasks) || (!MycRom.Dyna4Cols) || (!MycRom.FrameSprites) ||
-        (!MycRom.SpriteDescriptions) ||
-        (!MycRom.ColorRotations) || (!MycRom.SpriteDetDwords) || (!MycRom.SpriteDetDwordPos) || (!MycRom.SpriteDetAreas) || (!MycRom.TriggerID))
-    {
-        cprintf("Can't get the buffers in Load_cRom");
-        Free_cRom(); // We free the buffers we got
-        fclose(pfile);
-        return false;
-    }
-    fread(&MycRom.HashCode[MycRom.nFrames], sizeof(UINT), MycRom.nFrames, pfile);
-    fread(&MycRom.ShapeCompMode[MycRom.nFrames], 1, MycRom.nFrames, pfile);
-    fread(&MycRom.CompMaskID[MycRom.nFrames], 1, MycRom.nFrames, pfile);
-    fread(&MycRom.MovRctID[MycRom.nFrames], 1, MycRom.nFrames, pfile);
-    if (tnmasks) fread(tCompMasks, 1, tnmasks * MycRom.fWidth * MycRom.fHeight, pfile);
-    if (tnmmasks) fread(&MycRom.MovRcts[MycRom.nMovMasks * 4], 1, tnmmasks * 4, pfile);
-    fread(&MycRom.cPal[MycRom.nFrames * 3 * MycRom.ncColors], 1, tnframes * 3 * MycRom.ncColors, pfile);
-    fread(&MycRom.cFrames[MycRom.nFrames * MycRom.fWidth * MycRom.fHeight], 1, tnframes * MycRom.fWidth * MycRom.fHeight, pfile);
-    fread(&MycRom.DynaMasks[MycRom.nFrames * MycRom.fWidth * MycRom.fHeight], 1, tnframes * MycRom.fWidth * MycRom.fHeight, pfile);
-    fread(&MycRom.Dyna4Cols[MycRom.nFrames * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors], 1, tnframes * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors, pfile);
-    fread(&MycRom.FrameSprites[MycRom.nFrames * MAX_SPRITES_PER_FRAME], 1, tnframes * MAX_SPRITES_PER_FRAME, pfile);
-    fread(&MycRom.SpriteDescriptions[MycRom.nSprites * MAX_SPRITE_SIZE * MAX_SPRITE_SIZE], sizeof(UINT16), tnsprites * MAX_SPRITE_SIZE * MAX_SPRITE_SIZE, pfile);
-    fseek(pfile, tnframes, SEEK_CUR); // we skip the active frame content
-    memset(MycRom.ColorRotations, 255, 3 * MAX_COLOR_ROTATION * MycRom.nFrames);
-    memset(MycRom.SpriteDetAreas, 255, sizeof(UINT16) * 4 * MAX_SPRITE_DETECT_AREAS * MycRom.nSprites);
-    if (lengthheader >= 9 * sizeof(UINT))
-    {
-        fread(&MycRom.ColorRotations[3 * MAX_COLOR_ROTATION * MycRom.nFrames], 1, 3 * MAX_COLOR_ROTATION * tnframes, pfile);
-        if (lengthheader >= 10 * sizeof(UINT))
-        {
-            fread(&MycRom.SpriteDetDwords[MycRom.nSprites * MAX_SPRITE_DETECT_AREAS], sizeof(UINT32), tnsprites * MAX_SPRITE_DETECT_AREAS, pfile);
-            fread(&MycRom.SpriteDetDwordPos[MycRom.nSprites * MAX_SPRITE_DETECT_AREAS], sizeof(UINT16), tnsprites * MAX_SPRITE_DETECT_AREAS, pfile);
-            fread(&MycRom.SpriteDetAreas[MycRom.nSprites * 4 * MAX_SPRITE_DETECT_AREAS], sizeof(UINT16), tnsprites * 4 * MAX_SPRITE_DETECT_AREAS, pfile);
-            if (lengthheader >= 11 * sizeof(UINT))
-            {
-                fread(&MycRom.TriggerID[MycRom.nFrames], sizeof(UINT32), tnframes, pfile);
-            }
-            else memset(MycRom.TriggerID, 0xff, sizeof(UINT32) * MycRom.nFrames);
-        }
-    }
-    fclose(pfile);
-    MycRP.oFrames = (UINT8*)realloc(MycRP.oFrames, (tnframes+ MycRom.nFrames) * MycRom.fWidth * MycRom.fHeight);
-    if (!MycRP.oFrames)
-    {
-        cprintf("Can't get the buffer in Add_cRP");
-        Free_cRP(); // We free the buffers we got
-        fclose(pfile2);
-        return false;
-    }
-    MycRP.FrameDuration = (UINT32*)realloc(MycRP.FrameDuration,(tnframes+ MycRom.nFrames) * sizeof(UINT32));
-    if (!MycRP.FrameDuration)
-    {
-        cprintf("Can't get the buffer in Add_cRP");
-        Free_cRP(); // We free the buffers we got
-        fclose(pfile2);
-        return false;
-    }
-    fread(tbuf, 1, 64, pfile2);
-    fread(&MycRP.oFrames[MycRom.nFrames * MycRom.fWidth * MycRom.fHeight], 1, (tnframes + MycRom.nFrames)* MycRom.fWidth* MycRom.fHeight, pfile2);
-    for (UINT32 ti = MycRom.nFrames; ti < MycRom.nFrames + tnframes; ti++)
-        MycRom.HashCode[ti] = crc32_fast(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight);
-    BOOL tactivecolset[MAX_COL_SETS];
-    fread(tactivecolset, sizeof(BOOL), MAX_COL_SETS, pfile2);
-    UINT8 tcolsets[MAX_COL_SETS * 16];
-    fread(tcolsets, sizeof(UINT8), MAX_COL_SETS * 16, pfile2);
-    UINT8 tnul;
-    fread(&tnul, sizeof(UINT8), 1, pfile2);
-    fread(&tnul, sizeof(UINT8), 1, pfile2);
-    char tnamecolsets[MAX_COL_SETS * 64];
-    fread(tnamecolsets, sizeof(char), MAX_COL_SETS * 64, pfile2);
-    // We look if the col sets are similar to the ones in the first file and if not to add them
-    for (int ti = 0; ti < MAX_COL_SETS; ti++)
-    {
-        if (tactivecolset[ti] == FALSE) continue;
-        int librefound = -1, samefound = -1;
-        for (int tj = 0; (tj < MAX_COL_SETS) && (samefound < 0); tj++)
-        {
-            if (MycRP.activeColSet[tj] == FALSE)
-            {
-                if (librefound < 0) librefound = tj;
-                continue;
-            }
-            samefound = tj;
-            for (UINT tk = 0; tk < MycRom.noColors; tk++)
-            {
-                if (tcolsets[ti * 16 + tk] != MycRP.ColSets[tj * 16 + tk])
-                {
-                    samefound = -1;
-                    break;
-                }
-            }
-        }
-        // if the colset doesn't exist and we have found a free one in the old sets, we copy the new there
-        if ((samefound < 0) && (librefound >= 0))
-        {
-            MycRP.activeColSet[librefound] = TRUE;
-            for (UINT tk = 0; tk < MycRom.noColors; tk++) MycRP.ColSets[librefound * 16 + tk] = tcolsets[ti * 16 + tk];
-            strcpy_s(&MycRP.nameColSet[librefound * 64], 64, &tnamecolsets[ti * 64]);
-        }
-    }
-    UINT32 tnul32;
-    fread(&tnul32, sizeof(UINT32), 1, pfile2);
-    fread(&tnul, sizeof(UINT8), 1, pfile2);
-    fread(&tnul32, sizeof(int), 1, pfile2);
-    fread(&tnul32, sizeof(BOOL), 1, pfile2);
-    fread(MycRP.Mask_Names, sizeof(char), MAX_MASKS * SIZE_MASK_NAME, pfile2);
-    // we check if there are similar masks and add new ones if any
-    for (int ti = 0; ti < tnmasks; ti++)
-    {
-        UINT8* newmask=&
-    }
-    fread(&MycRP.nSections, sizeof(UINT32), 1, pfile2);
-    fread(MycRP.Section_Firsts, sizeof(UINT32), MAX_SECTIONS, pfile2);
-    fread(MycRP.Section_Names, sizeof(char), MAX_SECTIONS * SIZE_SECTION_NAMES, pfile2);
-    fread(MycRP.Sprite_Names, sizeof(char), 255 * SIZE_SECTION_NAMES, pfile2);
-    fread(MycRP.Sprite_Col_From_Frame, sizeof(UINT32), 255, pfile2);
-    for (UINT ti = 0; ti < MycRom.nFrames; ti++) MycRP.FrameDuration[ti] = 0;
-    fread(MycRP.FrameDuration, sizeof(UINT32), MycRom.nFrames, pfile2);
-    fread(MycRP.Sprite_Edit_Colors, 1, 16 * 255, pfile2);
-    fread(MycRP.SaveDir, 1, 260, pfile2);
-    memset(MycRP.SpriteRect, 255, sizeof(UINT16) * 4 * 255);
-    fread(MycRP.SpriteRect, sizeof(UINT16), 4 * 255, pfile2);
-    fread(MycRP.SpriteRectMirror, sizeof(BOOL), 2 * 255, pfile2);
-    fclose(pfile2);
-    return true;
-}*/
 
 bool Save_cRP(char* path)
 {
@@ -1894,6 +1739,7 @@ bool Save_cRP(char* path)
     fwrite(MycRP.SaveDir, 1, 260, pfile);
     fwrite(MycRP.SpriteRect, sizeof(UINT16), 4 * 255, pfile);
     fwrite(MycRP.SpriteRectMirror, sizeof(BOOL), 2 * 255, pfile);
+    cprintf("cRP file %s saved successfully", tbuf);
     fclose(pfile);
     return true;
 }
@@ -1953,6 +1799,7 @@ bool Load_cRP(char* name)
     fread(MycRP.SpriteRect, sizeof(UINT16), 4 * 255, pfile);
     fread(MycRP.SpriteRectMirror, sizeof(BOOL), 2 * 255, pfile);
     fclose(pfile);
+    cprintf("cRP file %s loaded successfully", name);
     return true;
 }
 
@@ -1960,6 +1807,7 @@ bool Load_cDump(char* path)// , char* rom)
 {
     /*char tbuf[MAX_PATH];
     sprintf_s(tbuf, MAX_PATH, "%s%s.cdump", path, rom);*/
+    cprintf("\r\n----------------------------------\r\n");
 #pragma warning(suppress : 4996)
     FILE* pf = fopen(path, "rb");
     if (pf == 0)
@@ -1976,6 +1824,12 @@ bool Load_cDump(char* path)// , char* rom)
     fread(&MycRom.fWidth, sizeof(UINT32), 1, pf);
     fread(&MycRom.fHeight, sizeof(UINT32), 1, pf);
     fread(&MycRom.noColors, sizeof(UINT32), 1, pf);
+    for (unsigned int ti = 0; ti < MycRom.noColors; ti++) // shader of noColors oranges
+    {
+        originalcolors[ti * 3] = (UINT8)(255.0 * (float)ti / (float)(MycRom.noColors - 1));
+        originalcolors[ti * 3 + 1] = (UINT8)(127.0 * (float)ti / (float)(MycRom.noColors - 1));
+        originalcolors[ti * 3 + 2] = (UINT8)(0.0 * (float)ti / (float)(MycRom.noColors - 1));
+    }
     MycRom.ncColors = 64;
     MycRom.nCompMasks = 0;
     MycRom.nMovMasks = 0;
@@ -2090,6 +1944,7 @@ bool Load_cDump(char* path)// , char* rom)
     fclose(pf);
     Calc_Resize_Frame();
     UpdateFSneeded = true;
+    cprintf("Color Dump %s with %i frames loaded successfully", path, MycRom.nFrames);
     Delete_Duplicate_Frame();
     return true;
 }
@@ -2199,11 +2054,12 @@ bool Add_cDump(char* path)
     MycRom.nFrames += tnframes;
     Calc_Resize_Frame();
     UpdateFSneeded = true;
+    cprintf("Color Dump %s with %i frames added successfully", path, MycRom.nFrames);
     Delete_Duplicate_Frame();
     return true;
 }
 
-/*unsigned int Count_TXT_Frames(char* TXTF_buffer, size_t TXTF_buffer_len)
+unsigned int Count_TXT_Frames(char* TXTF_buffer, size_t TXTF_buffer_len)
 {
     // check the number of frames in the txt file
     unsigned int nF = 0;
@@ -2277,6 +2133,12 @@ bool Get_Frames_Ptr_Size_And_Number_Of_Colors(sFrames** ppFrames, UINT nFrames, 
             acFr++;
         }
     }
+    for (unsigned int ti = 0; ti < MycRom.noColors; ti++) // shader of noColors oranges
+    {
+        originalcolors[ti * 3] = (UINT8)(255.0 * (float)ti / (float)(MycRom.noColors - 1));
+        originalcolors[ti * 3 + 1] = (UINT8)(127.0 * (float)ti / (float)(MycRom.noColors - 1));
+        originalcolors[ti * 3 + 2] = (UINT8)(0.0 * (float)ti / (float)(MycRom.noColors - 1));
+    }
     //if (MycRom.fHeight == 64) acZoom = basezoom; else acZoom = 2 * basezoom;
     return true;
 }
@@ -2291,7 +2153,7 @@ bool Parse_TXT(char* TXTF_name, char* TXTF_buffer, size_t TXTF_buffer_len, sFram
         Free_Project();
         return false;
     }
-    cprintf("Opened txt file %s with %i frames: resolution %ix%i, %i colors", TXTF_name, *pnFrames, MycRom.fWidth, MycRom.fHeight, MycRom.noColors);
+    cprintf("TXT file %s with %i frames loaded successfully", TXTF_name, *pnFrames, MycRom.fWidth, MycRom.fHeight, MycRom.noColors);
     return true;
 }
 
@@ -2351,6 +2213,26 @@ void CompareAdditionalFrames(UINT nFrames, sFrames* pFrames)
     }
     cprintf("%i frames removed as duplicate, %i added", nfremoved, nFrames - nfremoved);
     //DestroyWindow(hDlg);
+}
+
+void Init_cFrame_Palette(UINT8* pPal)
+{
+    // Initialize a colorized palette with default colors
+    for (unsigned int ti = 0; ti < MycRom.noColors; ti++) // shader of noColors oranges
+    {
+        pPal[ti * 3] = (UINT8)(255.0 * (float)ti / (float)(MycRom.noColors - 1));
+        pPal[ti * 3 + 1] = (UINT8)(127.0 * (float)ti / (float)(MycRom.noColors - 1));
+        pPal[ti * 3 + 2] = (UINT8)(0.0 * (float)ti / (float)(MycRom.noColors - 1));
+    }
+    if (MycRom.noColors < MycRom.ncColors) // then remaining colors with a shade of grey
+    {
+        for (unsigned int ti = MycRom.noColors; ti < MycRom.ncColors; ti++)
+        {
+            pPal[ti * 3] = (UINT8)(255.0 * (float)(ti - MycRom.noColors) / (float)(MycRom.ncColors - 1 - MycRom.noColors));
+            pPal[ti * 3 + 1] = (UINT8)(255.0 * (float)(ti - MycRom.noColors) / (float)(MycRom.ncColors - 1 - MycRom.noColors));
+            pPal[ti * 3 + 2] = (UINT8)(255.0 * (float)(ti - MycRom.noColors) / (float)(MycRom.ncColors - 1 - MycRom.noColors));
+        }
+    }
 }
 
 bool CopyTXTFrames2Frame(UINT nFrames, sFrames* pFrames)
@@ -2686,7 +2568,7 @@ void Load_TXT_File(void)
     ofn.nMaxFile = sizeof(szFile);
     ofn.lpstrFilter = "Text (.txt)\0*.TXT\0";
     ofn.nFilterIndex = 1;
-    ofn.lpstrInitialDir = DumpDir;
+    ofn.lpstrInitialDir = MycRP.SaveDir;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
     if (GetOpenFileNameA(&ofn) == TRUE)
@@ -2695,18 +2577,6 @@ void Load_TXT_File(void)
         int i = (int)strlen(MycRP.SaveDir) - 1;
         while ((i > 0) && (MycRP.SaveDir[i] != '\\')) i--;
         MycRP.SaveDir[i + 1] = 0;
-        if (isLoadedProject)
-        {
-            if (MessageBox(hWnd, L"Confirm you want to close the current project and load a new one", L"Caution", MB_YESNO) == IDYES)
-            {
-                Free_Project();
-            }
-            else
-            {
-                SetCurrentDirectoryA(acDir);
-                return;
-            }
-        }
         FILE* pfile;
         if (fopen_s(&pfile, ofn.lpstrFile, "rb") != 0)
         {
@@ -2714,6 +2584,7 @@ void Load_TXT_File(void)
             SetCurrentDirectoryA(acDir);
             return;
         }
+        cprintf("\r\n----------------------------------\r\n");
         fseek(pfile, 0, SEEK_END);
         TXTF_buffer_len = (size_t)ftell(pfile);
         rewind(pfile);
@@ -2755,8 +2626,9 @@ void Load_TXT_File(void)
         CopyTXTFrames2Frame(nFrames, pFrames);
         free(TXTF_buffer);
         free(pFrames);
-        nselframes = 1;
-        preframe = 0;
+        selections[0].nselframes = 1;
+        selections[0].preframe = 0;
+        nselections = 1;
         PreFrameInStrip = 0;
         isLoadedProject = true;
     }
@@ -2793,41 +2665,44 @@ void Add_TXT_File(void)
 
     if (GetOpenFileNameA(&ofn) == TRUE)
     {
-        FILE* pfile;
-        if (fopen_s(&pfile, ofn.lpstrFile, "rb") != 0)
+        if (MessageBoxA(hWnd, "It is impossible to check that the TXT file is coming from the same ROM than the project, only proceed (YES) if you are sure, otherwise, cancel the action (NO)", "Warning", MB_YESNO) == IDYES)
         {
-            cprintf("Unable to open the file %s", ofn.lpstrFile);
-            SetCurrentDirectoryA(acDir);
-            return;
-        }
-        fseek(pfile, 0, SEEK_END);
-        TXTF_buffer_len = (size_t)ftell(pfile);
-        rewind(pfile);
-        TXTF_buffer = (char*)malloc(TXTF_buffer_len + 1);
-        if (!TXTF_buffer)
-        {
-            TXTF_buffer_len = 0;
-            cprintf("Unable to get the memory buffer for the TXT file");
+            FILE* pfile;
+            if (fopen_s(&pfile, ofn.lpstrFile, "rb") != 0)
+            {
+                cprintf("Unable to open the file %s", ofn.lpstrFile);
+                SetCurrentDirectoryA(acDir);
+                return;
+            }
+            fseek(pfile, 0, SEEK_END);
+            TXTF_buffer_len = (size_t)ftell(pfile);
+            rewind(pfile);
+            TXTF_buffer = (char*)malloc(TXTF_buffer_len + 1);
+            if (!TXTF_buffer)
+            {
+                TXTF_buffer_len = 0;
+                cprintf("Unable to get the memory buffer for the TXT file");
+                fclose(pfile);
+                SetCurrentDirectoryA(acDir);
+                return;
+            }
+            size_t nread = fread_s(TXTF_buffer, TXTF_buffer_len + 1, 1, TXTF_buffer_len, pfile);
+            TXTF_buffer[TXTF_buffer_len] = 0;
             fclose(pfile);
-            SetCurrentDirectoryA(acDir);
-            return;
-        }
-        size_t nread = fread_s(TXTF_buffer, TXTF_buffer_len + 1, 1, TXTF_buffer_len, pfile);
-        TXTF_buffer[TXTF_buffer_len] = 0;
-        fclose(pfile);
-        if (!Parse_TXT(ofn.lpstrFile, TXTF_buffer, TXTF_buffer_len, &pFrames, &nFrames))
-        {
+            if (!Parse_TXT(ofn.lpstrFile, TXTF_buffer, TXTF_buffer_len, &pFrames, &nFrames))
+            {
+                free(TXTF_buffer);
+                SetCurrentDirectoryA(acDir);
+                return;
+            }
+            CompareAdditionalFrames(nFrames, pFrames);
+            AddTXTFrames2Frame(nFrames, pFrames);
             free(TXTF_buffer);
-            SetCurrentDirectoryA(acDir);
-            return;
+            free(pFrames);
         }
-        CompareAdditionalFrames(nFrames, pFrames);
-        AddTXTFrames2Frame(nFrames, pFrames);
-        free(TXTF_buffer);
-        free(pFrames);
     }
     SetCurrentDirectoryA(acDir);
-}*/
+}
 #pragma endregion Project_File_Functions
 
 
@@ -2879,7 +2754,51 @@ void ResetMove(void)
     SetIcon(GetDlgItem(hwTB, IDC_MOVEFRAMES), IDI_MOVEFRAME);
 }
 
-bool isSReleased = false, isEnterReleased = false, isZReleased = false, isYReleased = false, isMReleased = false, isAReleased = false, isCReleased = false, isVReleased = false, isFReleased = false, isDReleased = false, isEReleased = false;
+bool isSReleased = false, isEnterReleased = false, isZReleased = false, isYReleased = false, isMReleased = false, isAReleased = false;
+bool isCReleased = false, isVReleased = false, isFReleased = false, isDReleased = false, isEReleased = false;
+bool isLeftReleased = false, isRightReleased = false;
+DWORD nextkeymove;
+
+void AddSel(UINT preframe, UINT newframe)
+{
+    const bool isShift = GetKeyState(VK_SHIFT) & 0x8000;
+    const bool isCtrl = GetKeyState(VK_CONTROL) & 0x8000;
+    if ((!isCtrl) && (!isShift))
+    {
+        selections[0].nselframes = 1;
+        selections[0].preframe = newframe;
+        nselections = 1;
+        return;
+    }
+    if (!isCtrl)
+    {
+        if (newframe > selections[nselections - 1].preframe)
+        {
+            selections[0].nselframes = newframe - selections[nselections - 1].preframe + 1;
+            selections[0].preframe = selections[nselections - 1].preframe;
+        }
+        else
+        {
+            selections[0].nselframes = selections[nselections - 1].preframe + selections[nselections - 1].nselframes - newframe;
+            selections[0].preframe = newframe;
+        }
+        nselections = 1;
+        return;
+    }
+    if (!isShift)
+    {
+        selections[nselections - 1].nselframes = 1;
+        selections[nselections - 1].preframe = newframe;
+        return;
+    }
+    if (newframe > selections[nselections - 1].preframe)
+        selections[nselections - 1].nselframes = newframe - selections[nselections - 1].preframe + 1;
+    else
+    {
+        selections[nselections - 1].nselframes = selections[nselections - 1].preframe + selections[nselections - 1].nselframes - newframe;
+        selections[nselections - 1].preframe = newframe;
+    }
+}
 
 void CheckAccelerators(void)
 {
@@ -2893,13 +2812,15 @@ void CheckAccelerators(void)
     if (!(GetKeyState('D') & 0x8000)) isDReleased = true;
     if (!(GetKeyState('E') & 0x8000)) isEReleased = true;
     if (!(GetKeyState('V') & 0x8000)) isVReleased = true;
+    if (!(GetKeyState(VK_LEFT) & 0x8000)) isLeftReleased = true;
+    if (!(GetKeyState(VK_RIGHT) & 0x8000)) isRightReleased = true;
     if (!(GetKeyState(VK_RETURN) & 0x8000)) isEnterReleased = true;
     if (GetForegroundWindow() == hWnd)
     {
         if (MycRom.name[0])
         {
             if ((GetKeyState(VK_ESCAPE) & 0x8000) && ChooseMove) ResetMove();
-            if (GetKeyState(VK_CONTROL) & 0x8000)
+            if ((GetKeyState(VK_CONTROL) & 0x8000) && (!(GetKeyState(VK_LEFT) & 0x8000)) && (!(GetKeyState(VK_RIGHT) & 0x8000)))
             {
                 if ((isSReleased) && (GetKeyState('S') & 0x8000))
                 {
@@ -2944,6 +2865,69 @@ void CheckAccelerators(void)
                     isEReleased = false;
                 }
             }
+            else
+            {
+                UINT step = 1;
+#define MAIN_WAIT 700
+#define INT_WAIT 100
+                if (GetKeyState(VK_MENU) & 0x8000) step = NFrameToDraw;
+                if (GetKeyState(VK_LEFT) & 0x8000)
+                {
+                    if (isLeftReleased)
+                    {
+                        nextkeymove = timeGetTime() + MAIN_WAIT;
+                        UINT preframe = acframe;
+                        if (acframe >= step) acframe -= step; else acframe = 0;
+                        if ((int)acframe < PreFrameInStrip) PreFrameInStrip = (int)acframe;
+                        else if ((int)acframe >= PreFrameInStrip + NFrameToDraw) PreFrameInStrip = (int)acframe - NFrameToDraw + 1;
+                        AddSel(preframe, acframe);
+                        isLeftReleased = false;
+                        UpdateFSneeded = true;
+                    }
+                    else
+                    {
+                        DWORD ptime = timeGetTime();
+                        if (ptime >= nextkeymove)
+                        {
+                            nextkeymove = timeGetTime() + INT_WAIT;
+                            UINT preframe = acframe;
+                            if (acframe >= step) acframe -= step; else acframe = 0;
+                            if ((int)acframe < PreFrameInStrip) PreFrameInStrip = (int)acframe;
+                            else if ((int)acframe >= PreFrameInStrip + NFrameToDraw) PreFrameInStrip = (int)acframe - NFrameToDraw + 1;
+                            AddSel(preframe, acframe);
+                            UpdateFSneeded = true;
+                        }
+                    }
+                }
+                if (GetKeyState(VK_RIGHT) & 0x8000)
+                {
+                    if (isRightReleased)
+                    {
+                        nextkeymove = timeGetTime() + MAIN_WAIT;
+                        UINT preframe = acframe;
+                        if (acframe < MycRom.nFrames - step) acframe += step; else acframe = MycRom.nFrames - 1;
+                        if ((int)acframe < PreFrameInStrip) PreFrameInStrip = (int)acframe;
+                        else if ((int)acframe >= PreFrameInStrip + NFrameToDraw) PreFrameInStrip = (int)acframe - NFrameToDraw + 1;
+                        AddSel(preframe, acframe);
+                        isRightReleased = false;
+                        UpdateFSneeded = true;
+                    }
+                    else
+                    {
+                        DWORD ptime = timeGetTime();
+                        if (ptime >= nextkeymove)
+                        {
+                            nextkeymove = timeGetTime() + INT_WAIT;
+                            UINT preframe = acframe;
+                            if (acframe < MycRom.nFrames - step) acframe += step; else acframe = MycRom.nFrames - 1;
+                            if ((int)acframe < PreFrameInStrip) PreFrameInStrip = (int)acframe;
+                            else if ((int)acframe >= PreFrameInStrip + NFrameToDraw) PreFrameInStrip = (int)acframe - NFrameToDraw + 1;
+                            AddSel(preframe, acframe);
+                            UpdateFSneeded = true;
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -2958,6 +2942,50 @@ void mouse_scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
     if (PreFrameInStrip >= (int)MycRom.nFrames) PreFrameInStrip = (int)MycRom.nFrames - 1;
     UpdateFSneeded = true;
 }
+
+void Check_Selection_Chunks(void)
+{
+    // first we merge the selections that cover
+    for (int ti = 0; ti < (int)nselections; ti++)
+    {
+        for (int tj = ti + 1; tj < (int)nselections; tj++)
+        {
+            if (selections[ti].preframe + selections[ti].nselframes >= selections[tj].preframe)
+            {
+                // Selections need to be merged
+                UINT new_preframe = (selections[ti].preframe < selections[tj].preframe) ? selections[ti].preframe : selections[tj].preframe;
+                UINT new_nselframes = (selections[ti].preframe + selections[ti].nselframes > selections[tj].preframe + selections[tj].nselframes) ?
+                    selections[ti].preframe + selections[ti].nselframes - new_preframe : selections[tj].preframe + selections[tj].nselframes - new_preframe;
+                // delete selection tj
+                for (int tk = tj; tk < (int)nselections - 1; tk++)
+                {
+                    selections[tk] = selections[tk + 1];
+                }
+                nselections--;
+                // modify selection ti
+                selections[ti].preframe = new_preframe;
+                selections[ti].nselframes = new_nselframes;
+                ti--;
+                break;
+            }
+        }
+    }
+    // then we bubble sort the selections from the end to the beginning
+    sSelection tmp;
+    for (int ti = 0; ti < (int)nselections - 1; ti++)
+    {
+        for (int tj = ti + 1; tj < (int)nselections; tj++)
+        {
+            if (selections[ti].preframe < selections[tj].preframe)
+            {
+                tmp = selections[ti];
+                selections[ti] = selections[tj];
+                selections[tj] = tmp;
+            }
+        }
+    }
+}
+
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
@@ -2999,14 +3027,27 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                     {
                         if (MessageBoxA(hWnd, "Confirm you want to move these frames?", "Confirm", MB_YESNO) == IDYES)
                         {
-                            Move_Frames(tpFrame);
+                            Check_Selection_Chunks();
+                            for (UINT ti = 0; ti < nselections; ti++)
+                            {
+                                Move_Frames(tpFrame, ti);
+                            }
                             ResetMove();
                             UpdateFSneeded = true;
                         }
                     }
                     else
                     {
-                        if (mods & GLFW_MOD_SHIFT)
+
+
+
+
+
+
+
+
+
+                     /*   if (mods & GLFW_MOD_SHIFT)
                         {
                             // select a range
                             if (preframe > tpFrame)
@@ -3022,6 +3063,16 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                             preframe = tpFrame;
                             nselframes = 1;
                         }
+                        */
+
+
+
+
+
+
+
+
+
                         UpdateFSneeded = true;
                     }
                 }
@@ -3093,6 +3144,20 @@ bool CreateTextures(void)
     pbmp->UnlockBits(&bmpdata);
     delete pbmp;
 
+    // We open the cRom texture
+    pbmp = Bitmap::FromFile(L"textures\\cRom.png");
+    if (pbmp == NULL) return false;
+    rect = Rect(0, 0, pbmp->GetWidth(), pbmp->GetHeight());
+    pbmp->LockBits(&rect, ImageLockModeRead, PixelFormat32bppARGB, &bmpdata);
+    glGenTextures(1, &TxcRom);
+    glBindTexture(GL_TEXTURE_2D, TxcRom);
+    // We allocate a texture corresponding to the width of the screen in case we are fullscreen by 64-pixel (frame) + 2x16-pixel (margins) height
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rect.Width, rect.Height, 0, GL_BGRA, GL_UNSIGNED_BYTE, bmpdata.Scan0);
+    pbmp->UnlockBits(&bmpdata);
+    delete pbmp;
+
     // Create the textures for the lower strip showing the sprite
     glfwMakeContextCurrent(glfwframestripc);
     MonWidth = GetSystemMetrics(SM_CXFULLSCREEN);
@@ -3132,12 +3197,87 @@ bool CreateTextures(void)
     pbmp->UnlockBits(&bmpdata);
     delete pbmp;
 
+    // We open the cRom texture
+    pbmp = Bitmap::FromFile(L"textures\\cRom.png");
+    if (pbmp == NULL) return false;
+    rect = Rect(0, 0, pbmp->GetWidth(), pbmp->GetHeight());
+    pbmp->LockBits(&rect, ImageLockModeRead, PixelFormat32bppARGB, &bmpdata);
+    glGenTextures(1, &TxcRom2);
+    glBindTexture(GL_TEXTURE_2D, TxcRom2);
+    // We allocate a texture corresponding to the width of the screen in case we are fullscreen by 64-pixel (frame) + 2x16-pixel (margins) height
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rect.Width, rect.Height, 0, GL_BGRA, GL_UNSIGNED_BYTE, bmpdata.Scan0);
+    pbmp->UnlockBits(&bmpdata);
+    delete pbmp;
+
     // Read the RAW digit definition
     FILE* pfile;
     if (fopen_s(&pfile, "textures\\chiffres.raw", "rb")) return false;
     fread(Raw_Digit_Def, 1, RAW_DIGIT_W * RAW_DIGIT_H * 10, pfile);
     fclose(pfile);
+
     return true;
+}
+
+int CALLBACK BrowseCallbackProc(HWND hwnd, UINT uMsg, LPARAM lParam, LPARAM lpData)
+{
+    LPITEMIDLIST pidlNavigate;
+    switch (uMsg)
+    {
+    case BFFM_INITIALIZED:
+    {
+        pidlNavigate = (LPITEMIDLIST)lpData;
+        if (pidlNavigate != NULL)
+            SendMessage(hwnd, BFFM_SETSELECTION, (WPARAM)FALSE, (LPARAM)pidlNavigate);
+    }
+    break;
+    }
+    return 0;
+}
+
+void ShowWait(void)
+{
+    glfwMakeContextCurrent(glfwframestripo);
+    glDisable(GL_BLEND);
+    glBindTexture(GL_TEXTURE_2D, TxcRom);
+    glEnable(GL_TEXTURE_2D);
+    glBegin(GL_TRIANGLES);
+    glColor4f(1, 1, 1, 1);
+    glTexCoord2f(0, 0);
+    glVertex2i(0, 0);
+    glTexCoord2f(1, 0);
+    glVertex2i(ScrW, 0);
+    glTexCoord2f(1, 0.5f);
+    glVertex2i(ScrW, FRAME_STRIP_HEIGHT);
+    glTexCoord2f(0, 0);
+    glVertex2i(0, 0);
+    glTexCoord2f(1, 0.5f);
+    glVertex2i(ScrW, FRAME_STRIP_HEIGHT);
+    glTexCoord2f(0, 0.5f);
+    glVertex2i(0, FRAME_STRIP_HEIGHT);
+    glEnd();
+    gl33_SwapBuffers(glfwframestripo, false);
+    glfwMakeContextCurrent(glfwframestripc);
+    glDisable(GL_BLEND);
+    glBindTexture(GL_TEXTURE_2D, TxcRom2);
+    glEnable(GL_TEXTURE_2D);
+    glBegin(GL_TRIANGLES);
+    glColor4f(1, 1, 1, 1);
+    glTexCoord2f(0, 0.5f);
+    glVertex2i(0, 0);
+    glTexCoord2f(1, 0.5f);
+    glVertex2i(ScrW, 0);
+    glTexCoord2f(1, 1);
+    glVertex2i(ScrW, FRAME_STRIP_HEIGHT);
+    glTexCoord2f(0, 0.5f);
+    glVertex2i(0, 0);
+    glTexCoord2f(1, 1);
+    glVertex2i(ScrW, FRAME_STRIP_HEIGHT);
+    glTexCoord2f(0, 1);
+    glVertex2i(0, FRAME_STRIP_HEIGHT);
+    glEnd();
+    gl33_SwapBuffers(glfwframestripc, false);
 }
 
 INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
@@ -3150,6 +3290,10 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
             {
                 case IDC_OPENCDUMP:
                 {
+                    if (isLoadedProject)
+                    {
+                        if (MessageBoxA(hWnd, "Another project is already opened, confirm you want to close it and switch to another?", "Confirm", MB_YESNO) == IDNO) return TRUE;
+                    }
                     ResetMove();
                     OPENFILENAMEA ofn;
                     ZeroMemory(&ofn, sizeof(ofn));
@@ -3166,42 +3310,75 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                     ofn.lpstrInitialDir = NULL;
                     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
                     GetOpenFileNameA(&ofn);
+                    ShowWait();
+                    strcpy_s(MycRP.SaveDir, 260, ofn.lpstrFile);
+                    int i = (int)strlen(MycRP.SaveDir) - 1;
+                    while ((i > 0) && (MycRP.SaveDir[i] != '\\')) i--;
+                    MycRP.SaveDir[i + 1] = 0;
                     Load_cDump(ofn.lpstrFile);
+                    isLoadedProject = true;
                     return TRUE;
                 }
                 case IDC_ADDCDUMP:
                 {
                     ResetMove();
-                    if (MycRom.name[0] == 0) return TRUE;
-                    OPENFILENAMEA ofn;
-                    ZeroMemory(&ofn, sizeof(ofn));
-                    char szFile[MAX_PATH];
-                    ofn.lStructSize = sizeof(OPENFILENAMEA);
-                    ofn.hwndOwner = hWnd;
-                    ofn.lpstrFile = szFile;
-                    ofn.lpstrFile[0] = '\0';
-                    ofn.nMaxFile = sizeof(szFile);
-                    ofn.lpstrFilter = "cDump\0*.cDump\0\0";
-                    ofn.nFilterIndex = 1;
-                    ofn.lpstrFileTitle = NULL;
-                    ofn.nMaxFileTitle = 0;
-                    ofn.lpstrInitialDir = NULL;
-                    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-                    GetOpenFileNameA(&ofn);
-                    Add_cDump(ofn.lpstrFile);
+                    if (isLoadedProject)
+                    {
+                        if (MycRom.name[0] == 0) return TRUE;
+                        OPENFILENAMEA ofn;
+                        ZeroMemory(&ofn, sizeof(ofn));
+                        char szFile[MAX_PATH];
+                        ofn.lStructSize = sizeof(OPENFILENAMEA);
+                        ofn.hwndOwner = hWnd;
+                        ofn.lpstrFile = szFile;
+                        ofn.lpstrFile[0] = '\0';
+                        ofn.nMaxFile = sizeof(szFile);
+                        ofn.lpstrFilter = "cDump\0*.cDump\0\0";
+                        ofn.nFilterIndex = 1;
+                        ofn.lpstrFileTitle = NULL;
+                        ofn.nMaxFileTitle = 0;
+                        ofn.lpstrInitialDir = NULL;
+                        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+                        GetOpenFileNameA(&ofn);
+                        ShowWait();
+                        Add_cDump(ofn.lpstrFile);
+                    }
+                    else MessageBoxA(hWnd, "No project opened, you can not append new data", "Failed", MB_OK);
                     return TRUE;
                 }
                 case IDC_OPENTXT:
                 {
+                    if (isLoadedProject)
+                    {
+                        if (MessageBoxA(hWnd, "Another project is already opened, confirm you want to close it and switch to another?", "Confirm", MB_YESNO) == IDNO) return TRUE;
+                    }
+                    ResetMove();
+                    Free_Project();
+                    ShowWait();
+                    Load_TXT_File();
+                    isLoadedProject = true;
+                    UpdateFSneeded = true;
                     return TRUE;
                 }
                 case IDC_ADDTXT:
                 {
+                    ResetMove();
+                    if (isLoadedProject)
+                    {
+
+                        ShowWait();
+                        Add_TXT_File();
+                    }
+                    else MessageBoxA(hWnd, "No project opened, you can not append new data", "Failed", MB_OK);
                     return TRUE;
                 }
                 case IDC_OPENCROM:
                 {
                     ResetMove();
+                    if (isLoadedProject)
+                    {
+                        if (MessageBoxA(hWnd, "Another project is already opened, confirm you want to close it and switch to another?", "Confirm", MB_YESNO) == IDNO) return TRUE;
+                    }
                     OPENFILENAMEA ofn;
                     ZeroMemory(&ofn, sizeof(ofn));
                     char szFile[MAX_PATH];
@@ -3217,17 +3394,40 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                     ofn.lpstrInitialDir = NULL;
                     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
                     GetOpenFileNameA(&ofn);
+                    ShowWait();
                     if (Load_cRom(ofn.lpstrFile))
                     {
                         ofn.lpstrFile[strlen(ofn.lpstrFile) - 2] = 'P';
                         ofn.lpstrFile[strlen(ofn.lpstrFile) - 1] = 0;
                         Load_cRP(ofn.lpstrFile);
+                        strcpy_s(MycRP.SaveDir, 260, ofn.lpstrFile);
+                        int i = (int)strlen(MycRP.SaveDir) - 1;
+                        while ((i > 0) && (MycRP.SaveDir[i] != '\\')) i--;
+                        MycRP.SaveDir[i + 1] = 0;
+                        isLoadedProject = true;
                     }
                     UpdateSectionList();
                     return TRUE;
                 }
                 case IDC_SAVECROM:
                 {
+                    BROWSEINFOA bi;
+                    bi.hwndOwner = hWnd;
+                    bi.pidlRoot = NULL;
+                    //char tbuf2[MAX_PATH];
+                    bi.pszDisplayName = MycRP.SaveDir;
+                    bi.lpszTitle = "Choose a save directory...";
+                    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+                    bi.lpfn = BrowseCallbackProc;
+                    bi.lParam= (LPARAM)ILCreateFromPathA(MycRP.SaveDir);
+                    bi.iImage = 0;
+                    LPITEMIDLIST piil;
+                    piil = SHBrowseForFolderA(&bi);
+                    if (!piil) return TRUE;
+                    SHGetPathFromIDListA(piil, MycRP.SaveDir);
+                    if (MycRP.SaveDir[strlen(MycRP.SaveDir) - 1] != '\\') strcat_s(MycRP.SaveDir, MAX_PATH, "\\");
+                    CoTaskMemFree(piil);
+                    ShowWait();
                     Save_cRP(MycRP.SaveDir);
                     Save_cRom(MycRP.SaveDir);
                     return TRUE;
@@ -3257,7 +3457,27 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                 {
                     if (MycRom.name[0] == 0) return TRUE;
                     ResetMove();
-                    if (MessageBoxA(hWnd, "Confirm you want to delete these frames?", "Confirm", MB_YESNO) == IDYES) Del_Frames();
+
+
+
+
+
+
+
+
+                    //if (MessageBoxA(hWnd, "Confirm you want to delete these frames?", "Confirm", MB_YESNO) == IDYES) Del_Frames();
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
                     UpdateSectionList();
                     return TRUE;
                 }
@@ -3271,12 +3491,11 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                 case IDC_SECTION:
                 {
                     if (MycRom.name[0] == 0) return TRUE;
-                    unsigned char acpos = (unsigned char)SendMessage(GetDlgItem(hDlg, IDC_SECTION), CB_GETCURSEL, 0, 0) - 1;
-                    if ((HIWORD(wParam) == CBN_SELCHANGE) && (acpos < MAX_SECTIONS - 1))
+                    unsigned char acpos = (unsigned char)SendMessage(GetDlgItem(hDlg, IDC_SECTION), CB_GETCURSEL, 0, 0);
+                    if ((HIWORD(wParam) == CBN_SELCHANGE) && (acpos < MAX_SECTIONS))
                     {
                         PreFrameInStrip = MycRP.Section_Firsts[acpos];
                         UpdateFSneeded = true;
-                        SetDlgItemTextA(hwTB, IDC_SECTIONNAME, "");// &MycRP.Section_Names[acpos * SIZE_SECTION_NAMES]);
                     }
                     return TRUE;
                 }
@@ -3346,7 +3565,7 @@ bool CreateToolbar(void)
 
 #pragma region Main
 
-bool isLeftReleased = false, isRightReleased = false;
+//bool isLeftReleased = false, isRightReleased = false;
 
 bool LoadVPinMAMEDir(void)
 {
@@ -3402,7 +3621,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     AllocConsole();
     hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
-    cprintf("ColorizingDMD started");
+    cprintf("SortingCDump started");
     WNDCLASSEXW wcex;
     wcex.cbSize = sizeof(WNDCLASSEX);
     wcex.style = CS_HREDRAW | CS_VREDRAW;
@@ -3522,7 +3741,26 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             char tbuf[256];
             POINT tpt;
             GetCursorPos(&tpt);
-            sprintf_s(tbuf, 256, "SortingCDump v%i.%i (by Zedrummer)     ROM name: %s      Frame: %i->%i/%i      @%.1fFPS", MAJ_VERSION, MIN_VERSION, MycRom.name, preframe, preframe + nselframes - 1, MycRom.nFrames, fps);
+
+
+
+
+
+
+
+            //sprintf_s(tbuf, 256, "SortingCDump v%i.%i (by Zedrummer)     ROM name: %s      Frame: %i->%i/%i      @%.1fFPS", MAJ_VERSION, MIN_VERSION, MycRom.name, acframe, acframe + nselframes - 1, MycRom.nFrames, fps);
+
+
+
+
+
+
+
+
+
+
+
+
             SetWindowTextA(hWnd, tbuf);
             glfwPollEvents();
         }
