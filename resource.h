@@ -38,6 +38,10 @@
 #define IDI_OPENTXT                     268
 #define IDD_CHECKDEL                    269
 #define IDI_MOVEFRAME2                  270
+#define IDI_ADDTAB                      271
+#define IDI_DELTAB                      272
+#define IDI_ICON13                      273
+#define IDI_MOVESECTION                 273
 #define IDC_COLMODE2                    1001
 #define IDC_NEW                         1001
 #define IDC_COLMODE3                    1002
@@ -170,6 +174,8 @@
 #define IDC_COMBO2                      1120
 #define IDC_SECTION                     1120
 #define IDC_DELFREE                     1121
+#define IDC_NAMESECTION                 1121
+#define IDC_SECTIONLIST                 1122
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -177,9 +183,9 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
-#define _APS_NEXT_RESOURCE_VALUE        271
+#define _APS_NEXT_RESOURCE_VALUE        274
 #define _APS_NEXT_COMMAND_VALUE         32776
-#define _APS_NEXT_CONTROL_VALUE         1121
+#define _APS_NEXT_CONTROL_VALUE         1122
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
 #endif

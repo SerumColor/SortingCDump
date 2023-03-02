@@ -38,7 +38,7 @@ using namespace Gdiplus;
 static TCHAR szWindowClass[] = _T("ColorizingDMD");
 
 HINSTANCE hInst;                                // current instance
-HWND hWnd = NULL, hwTB = NULL;
+HWND hWnd = NULL, hwTB = NULL, hMovSec = NULL;
 UINT ColSetMode = 0, preColRot = 0, acColRot = 0; // 0- displaying colsets, 1- displaying colrots
 GLFWwindow * glfwframestripo, * glfwframestripc;	// handle+context of our window
 bool fDone = false;
@@ -46,10 +46,6 @@ bool fDone = false;
 bool ChooseMove = false;
 bool WhiteMoveButton = true;
 bool isLoadedProject = false;
-
-//UINT acFrame = 0, prevFrame = 0;
-
-//UINT preframe = 0, nselframes = 1;
 
 typedef struct
 {
@@ -82,9 +78,7 @@ int PreFrameInStrip = 0; // First frame to display in the frame strip
 UINT NFrameToDraw = 0; // how many frames to draw in the strip
 UINT FS_LMargin = 0;    // left margin (same as right) before the first frame in the strip
 
-//unsigned int nSelFrames = 1; // number of selected frames
 #define MAX_SEL_FRAMES 8192 // Max number of selected frames (has consequences on the undo/redo buffer size!)
-//unsigned int SelFrames[MAX_SEL_FRAMES]={0}; // list of selected frames
 const UINT8 AcColor[3] = { 255,255,255 };
 const UINT8 SelColor[3] = { 100,150,255 };
 const UINT8 UnselColor[3] = { 255,50,50 };
@@ -97,7 +91,6 @@ HANDLE hStdout; // for log window
 
 bool UpdateFSneeded = false; // Do we need to update the frame strip
 bool UpdateSSneeded = false; // Do we need to update the sprite strip
-//bool UpdateFSneededwhenBreleased = false; // Do we need to update the frame strip after the mouse button has been released
 
 #pragma endregion Global_Variables
 
@@ -175,21 +168,57 @@ void Move_Frames(UINT nofrins, UINT nosel)
     UpdateFSneeded = true;
 }
 
-UINT isFirstSection[MAX_SECTIONS];
+UINT isFirstSection[2 * MAX_SECTIONS];
 UINT nfs = 0;
-UINT isUsedBySprite[255];
+UINT isUsedBySprite[2 * 255];
 UINT nubs = 0;
 
+int Which_Section(UINT nofr)
+{
+    int tres = -1, tfirst = -1;
+    for (int ti = 0; ti < (int)MycRP.nSections; ti++)
+    {
+        if (((int)MycRP.Section_Firsts[ti] > tfirst) && (MycRP.Section_Firsts[ti] <= nofr))
+        {
+            tfirst = (int)MycRP.Section_Firsts[ti];
+            tres = ti;
+        }
+    }
+    return tres;
+}
 void UpdateSectionList(void)
 {
-    HWND hlst = GetDlgItem(hwTB, IDC_SECTION);
+    HWND hlst = GetDlgItem(hwTB, IDC_SECTIONLIST);
     SendMessage(hlst, CB_RESETCONTENT, 0, 0);
+    SendMessageA(hlst, CB_ADDSTRING, 0, (LPARAM)"- None -");
     for (UINT32 ti = 0; ti < MycRP.nSections; ti++)
     {
         char tbuf[256];
         sprintf_s(tbuf, 256, "%i - %s", ti + 1, &MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
         SendMessageA(hlst, CB_ADDSTRING, 0, (LPARAM)tbuf);
     }
+    int ti = Which_Section(acframe);
+    SendMessage(hlst, CB_SETCURSEL, ti + 1, 0);
+}
+
+int Duplicate_Section_Name(char* name)
+{
+    // check if a section already has this name
+    if (strcmp(name, "- None -") == 0) return 30000; // if we have the "- None -" name, we return as if it was used
+    for (UINT ti = 0; ti < MycRP.nSections; ti++)
+    {
+        if (strcmp(name, &MycRP.Section_Names[ti * SIZE_SECTION_NAMES]) == 0) return ti;
+    }
+    return -1;
+}
+
+int is_Section_First(UINT nofr)
+{
+    for (UINT ti = 0; ti < MycRP.nSections; ti++)
+    {
+        if (MycRP.Section_Firsts[ti] == nofr) return (int)ti;
+    }
+    return -1;
 }
 
 INT_PTR CALLBACK CheckDel_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
@@ -231,31 +260,31 @@ INT_PTR CALLBACK CheckDel_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lP
     return FALSE;
 }
 
-bool Del_Parts(UINT pfr, UINT nfr, UINT8* buffer, UINT size_unit, UINT size_val)
+bool Del_Parts(UINT pfr, UINT nfr, UINT8** buffer, UINT size_unit, UINT size_val)
 {
     if (pfr + nfr < MycRom.nFrames)
     {
-        memmove(&buffer[pfr * size_unit * size_val], &buffer[(pfr + nfr) * size_unit * size_val], (MycRom.nFrames - (pfr + nfr)) * size_unit * size_val);
+        memmove(&(*buffer)[pfr * size_unit * size_val], &(*buffer)[(pfr + nfr) * size_unit * size_val], (MycRom.nFrames - (pfr + nfr)) * size_unit * size_val);
     }
-    buffer = (UINT8*)realloc(buffer, (MycRom.nFrames - nfr) * size_unit * size_val);
+    *buffer = (UINT8*)realloc(*buffer, (MycRom.nFrames - nfr) * size_unit * size_val);
     return true;
 }
 
 void Del_Frame_Range(UINT pfr, UINT nfr)
 {
-    Del_Parts(pfr, nfr, MycRom.cFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
-    Del_Parts(pfr, nfr, (UINT8*)MycRom.HashCode, 1, sizeof(UINT32));
-    Del_Parts(pfr, nfr, MycRom.CompMaskID, 1, sizeof(UINT8));
-    Del_Parts(pfr, nfr, MycRom.ShapeCompMode, 1, sizeof(UINT8));
-    Del_Parts(pfr, nfr, MycRom.MovRctID, 1, sizeof(UINT8));
-    Del_Parts(pfr, nfr, MycRom.cPal, 3 * MycRom.ncColors, sizeof(UINT8));
-    Del_Parts(pfr, nfr, MycRom.DynaMasks, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
-    Del_Parts(pfr, nfr, MycRom.Dyna4Cols, MycRom.noColors * MAX_DYNA_SETS_PER_FRAME, sizeof(UINT8));
-    Del_Parts(pfr, nfr, MycRom.FrameSprites, MAX_SPRITES_PER_FRAME, sizeof(UINT8));
-    Del_Parts(pfr, nfr, MycRom.ColorRotations, 3 * MAX_COLOR_ROTATION, sizeof(UINT8));
-    Del_Parts(pfr, nfr, (UINT8*)MycRom.TriggerID, 1, sizeof(UINT32));
-    Del_Parts(pfr, nfr, MycRP.oFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
-    Del_Parts(pfr, nfr, (UINT8*)MycRP.FrameDuration, 1, sizeof(UINT32));
+    Del_Parts(pfr, nfr, &MycRom.cFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    Del_Parts(pfr, nfr, (UINT8**)&MycRom.HashCode, 1, sizeof(UINT32));
+    Del_Parts(pfr, nfr, &MycRom.CompMaskID, 1, sizeof(UINT8));
+    Del_Parts(pfr, nfr, &MycRom.ShapeCompMode, 1, sizeof(UINT8));
+    Del_Parts(pfr, nfr, &MycRom.MovRctID, 1, sizeof(UINT8));
+    Del_Parts(pfr, nfr, &MycRom.cPal, 3 * MycRom.ncColors, sizeof(UINT8));
+    Del_Parts(pfr, nfr, &MycRom.DynaMasks, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    Del_Parts(pfr, nfr, &MycRom.Dyna4Cols, MycRom.noColors * MAX_DYNA_SETS_PER_FRAME, sizeof(UINT8));
+    Del_Parts(pfr, nfr, &MycRom.FrameSprites, MAX_SPRITES_PER_FRAME, sizeof(UINT8));
+    Del_Parts(pfr, nfr, &MycRom.ColorRotations, 3 * MAX_COLOR_ROTATION, sizeof(UINT8));
+    Del_Parts(pfr, nfr, (UINT8**)&MycRom.TriggerID, 1, sizeof(UINT32));
+    Del_Parts(pfr, nfr, &MycRP.oFrames, MycRom.fWidth * MycRom.fHeight, sizeof(UINT8));
+    Del_Parts(pfr, nfr, (UINT8**)&MycRP.FrameDuration, 1, sizeof(UINT32));
     for (UINT ti = 0; ti < MycRom.nSprites; ti++) MycRP.Sprite_Col_From_Frame[ti] = New_Frame_Del_Pos(MycRP.Sprite_Col_From_Frame[ti], pfr, nfr);
     for (UINT ti = 0; ti < MycRP.nSections; ti++) MycRP.Section_Firsts[ti] = New_Frame_Del_Pos(MycRP.Section_Firsts[ti], pfr, nfr);
     MycRom.nFrames -= nfr;
@@ -318,63 +347,36 @@ void Del_Section(UINT nsec)
     MycRP.nSections--;
 }
 
-void Del_Frames(UINT nosel)
+void Del_Frames(UINT nosel, int dbres)
 {
-    if (selections[nosel].preframe + selections[nosel].nselframes > MycRom.nFrames) return;
-    // we first check the sections and sprites pointing to these frames
-    nfs = 0;
-    for (UINT ti = 0; ti < MycRP.nSections; ti++)
+    if (dbres == 0) return; // delete cancelled
+    else if (dbres == 1) // delete all and their related sprites and sections
     {
-        if ((MycRP.Section_Firsts[ti] >= selections[nosel].preframe) && (MycRP.Section_Firsts[ti] < selections[nosel].preframe + selections[nosel].nselframes))
-        {
-            isFirstSection[nfs] = ti;
-            nfs++;
-        }
+        Del_Frame_Range(selections[nosel].preframe, selections[nosel].nselframes);
+        for (UINT ti = 0; ti < nfs; ti++) Del_Section(isFirstSection[ti]);
+        for (UINT ti = 0; ti < nubs; ti++) Del_Sprite(isUsedBySprite[ti]);
     }
-    nubs = 0;
-    for (UINT ti = 0; ti < MycRom.nSprites; ti++)
+    else if (dbres == 2) // delete only the frames with no related sprite or section
     {
-        if ((MycRP.Sprite_Col_From_Frame[ti] >= selections[nosel].preframe) && (MycRP.Sprite_Col_From_Frame[ti] < selections[nosel].preframe + selections[nosel].nselframes))
+        UINT pfr, nfr;
+        UINT ti = 0;
+        while (ti < selections[nosel].nselframes)
         {
-            isUsedBySprite[nubs] = ti;
-            nubs++;
-        }
-    }
-    if ((nfs > 0) || (nubs > 0))
-    {
-        int dbres = (int)DialogBox(hInst, MAKEINTRESOURCE(IDD_CHECKDEL), hWnd, CheckDel_Proc);
-        if (dbres == 0) return; // delete cancelled
-        else if (dbres == 1) // delete all and their related sprites and sections
-        {
-            Del_Frame_Range(selections[nosel].preframe, selections[nosel].nselframes);
-            for (UINT ti = 0; ti < nfs; ti++) Del_Section(isFirstSection[ti]);
-            for (UINT ti = 0; ti < nubs; ti++) Del_Sprite(isUsedBySprite[ti]);
-        }
-        else // delete only the frames with no related sprite or section
-        {
-            UINT pfr, nfr;
-            UINT ti = 0;
-            while (ti < selections[nosel].nselframes)
+            while (((is_Section_Pointed(selections[nosel].preframe + ti)) || (is_Sprite_Pointed(selections[nosel].preframe + ti))) && (ti < selections[nosel].nselframes)) ti++;
+            if (ti == selections[nosel].nselframes) break;
+            pfr = ti + selections[nosel].preframe;
+            nfr = 0;
+            while (((!is_Section_Pointed(selections[nosel].preframe + ti)) && (!is_Sprite_Pointed(selections[nosel].preframe + ti))) && (ti < selections[nosel].nselframes))
             {
-                while (((is_Section_Pointed(selections[nosel].preframe + ti)) || (is_Sprite_Pointed(selections[nosel].preframe + ti))) && (ti < selections[nosel].nselframes)) ti++;
-                if (ti == selections[nosel].nselframes) break;
-                pfr = ti + selections[nosel].preframe;
-                nfr = 0;
-                while (((!is_Section_Pointed(selections[nosel].preframe + ti)) && (!is_Sprite_Pointed(selections[nosel].preframe + ti))) && (ti < selections[nosel].nselframes))
-                {
-                    nfr++;
-                    ti++;
-                }
-                Del_Frame_Range(pfr, nfr);
-                selections[nosel].nselframes -= nfr;
-                ti -= nfr;
+                nfr++;
+                ti++;
             }
+            Del_Frame_Range(pfr, nfr);
+            selections[nosel].nselframes -= nfr;
+            ti -= nfr;
         }
     }
     else Del_Frame_Range(selections[nosel].preframe, selections[nosel].nselframes);
-    UpdateFSneeded = true;
-    selections[nosel].nselframes = 1;
-    if (selections[nosel].preframe >= MycRom.nFrames) selections[nosel].preframe = MycRom.nFrames - 1;
     PreFrameInStrip = max((int)selections[nosel].preframe - 1, 0);
 }
 
@@ -1043,19 +1045,16 @@ bool isFrameSelected(UINT noFr)   // return false if the frame is not selected, 
     return false;
 }
 
-int Which_Section(UINT nofr)
+void Delete_Section(int nosec)
 {
-    int tres = -1, tfirst = -1;
-    for (int ti = 0; ti < (int)MycRP.nSections; ti++)
+    for (int ti = nosec; ti < (int)MycRP.nSections - 1; ti++)
     {
-        if (((int)MycRP.Section_Firsts[ti] > tfirst) && (MycRP.Section_Firsts[ti] <= nofr))
-        {
-            tfirst = (int)MycRP.Section_Firsts[ti];
-            tres = ti;
-        }
+        MycRP.Section_Firsts[ti] = MycRP.Section_Firsts[ti + 1];
+        for (int tj = 0; tj < SIZE_SECTION_NAMES; tj++) MycRP.Section_Names[ti * SIZE_SECTION_NAMES + tj] = MycRP.Section_Names[(ti + 1) * SIZE_SECTION_NAMES + tj];
     }
-    return tres;
+    MycRP.nSections--;
 }
+
 
 void Get_Frame_Strip_Line_Color(UINT pos)
 {
@@ -1775,7 +1774,9 @@ bool Load_cRP(char* name)
     fread(MycRP.name, 1, 64, pfile);
     fread(MycRP.oFrames, 1, MycRom.nFrames * MycRom.fWidth * MycRom.fHeight, pfile);
     for (UINT32 ti = 0; ti < MycRom.nFrames; ti++)
+    {
         MycRom.HashCode[ti] = crc32_fast(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight);
+    }
     fread(MycRP.activeColSet, sizeof(BOOL), MAX_COL_SETS, pfile);
     fread(MycRP.ColSets, sizeof(UINT8), MAX_COL_SETS * 16, pfile);
     fread(&MycRP.acColSet, sizeof(UINT8), 1, pfile);
@@ -2709,6 +2710,162 @@ void Add_TXT_File(void)
 #pragma region Window_Procs
 
 
+void SortSections(void)
+{
+    unsigned short sortlist[MAX_SECTIONS];
+    for (UINT ti = 0; ti < MycRP.nSections; ti++) sortlist[ti] = ti;
+    for (UINT ti = 0; ti < MycRP.nSections; ti++)
+    {
+        for (UINT tj = ti + 1; tj < MycRP.nSections; tj++)
+            if (_stricmp(&MycRP.Section_Names[sortlist[tj] * SIZE_SECTION_NAMES], &MycRP.Section_Names[sortlist[ti] * SIZE_SECTION_NAMES]) < 0)  //Edit.
+            {
+                unsigned short tamp = sortlist[tj];
+                sortlist[tj] = sortlist[ti];
+                sortlist[ti] = tamp;
+            }
+    }
+    UINT32		Section_Firsts[MAX_SECTIONS]; // first frame of each section
+    char		Section_Names[MAX_SECTIONS * SIZE_SECTION_NAMES]; // Names of the sections
+    for (UINT ti = 0; ti < MycRP.nSections; ti++)
+    {
+        Section_Firsts[ti] = MycRP.Section_Firsts[sortlist[ti]];
+        strcpy_s(&Section_Names[ti * SIZE_SECTION_NAMES], SIZE_SECTION_NAMES, &MycRP.Section_Names[sortlist[ti] * SIZE_SECTION_NAMES]);
+    }
+    memcpy(MycRP.Section_Firsts, Section_Firsts, sizeof(UINT32) * MAX_SECTIONS);
+    memcpy(MycRP.Section_Names, Section_Names, MAX_SECTIONS * SIZE_SECTION_NAMES);
+}
+
+void MoveSection(int nosec, int decalage)
+{
+    if (nosec == LB_ERR) return;
+    /*	UINT32		Section_Firsts[MAX_SECTIONS]; // first frame of each section
+        char		Section_Names[MAX_SECTIONS * SIZE_SECTION_NAMES]; // Names of the sections
+    */
+    UINT32 sfirst;
+    char sName[SIZE_SECTION_NAMES];
+    sfirst = MycRP.Section_Firsts[nosec + decalage];
+    MycRP.Section_Firsts[nosec + decalage] = MycRP.Section_Firsts[nosec];
+    MycRP.Section_Firsts[nosec] = sfirst;
+    strcpy_s(sName, SIZE_SECTION_NAMES, &MycRP.Section_Names[(nosec + decalage) * SIZE_SECTION_NAMES]);
+    strcpy_s(&MycRP.Section_Names[(nosec + decalage) * SIZE_SECTION_NAMES], SIZE_SECTION_NAMES, &MycRP.Section_Names[nosec * SIZE_SECTION_NAMES]);
+    strcpy_s(&MycRP.Section_Names[nosec * SIZE_SECTION_NAMES], SIZE_SECTION_NAMES, sName);
+}
+
+HWND hListBox, hwndButtonU, hwndButtonD, hwndButtonAlpha;
+LRESULT CALLBACK MovSecProc(HWND hWin, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_CREATE:
+    {
+        // Adding a ListBox.
+        hListBox = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", NULL, WS_CHILD | WS_VISIBLE | WS_VSCROLL, 25, 25, 200, 550, hWin, NULL, hInst, NULL);
+        if (!hListBox)
+        {
+            AffLastError((char*)"Create ListBox Window");
+            return FALSE;
+        }
+        ShowWindow(hListBox, TRUE);
+        hwndButtonU = CreateWindow(L"BUTTON", L"UP", WS_TABSTOP | WS_VISIBLE | WS_CHILD, 230, 205, 50, 50, hWin, NULL, hInst, NULL);      // Pointer not needed.
+        if (!hwndButtonU)
+        {
+            AffLastError((char*)"Create Button Up Window");
+            return FALSE;
+        }
+        ShowWindow(hwndButtonU, TRUE);
+        hwndButtonAlpha = CreateWindow(L"BUTTON", L"ALPHA", WS_TABSTOP | WS_VISIBLE | WS_CHILD, 230, 275, 50, 50, hWin, NULL, hInst, NULL);      // Pointer not needed.
+        if (!hwndButtonAlpha)
+        {
+            AffLastError((char*)"Create Button Alpha Window");
+            return FALSE;
+        }
+        ShowWindow(hwndButtonU, TRUE);
+        hwndButtonD = CreateWindow(L"BUTTON", L"DOWN", WS_TABSTOP | WS_VISIBLE | WS_CHILD, 230, 345, 50, 50, hWin, NULL, hInst, NULL);      // Pointer not needed.
+        if (!hwndButtonD)
+        {
+            AffLastError((char*)"Create Button Down Window");
+            return FALSE;
+        }
+        ShowWindow(hwndButtonD, TRUE);
+        for (UINT ti = 0; ti < MycRP.nSections; ti++)
+        {
+            SendMessageA(hListBox, LB_ADDSTRING, 0, (LPARAM)&MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
+        }
+        return TRUE;
+    }
+    case WM_MOUSEMOVE:
+    {
+        TRACKMOUSEEVENT me{};
+        me.cbSize = sizeof(TRACKMOUSEEVENT);
+        me.dwFlags = TME_LEAVE;
+        me.hwndTrack = hMovSec;
+        me.dwHoverTime = HOVER_DEFAULT;
+        TrackMouseEvent(&me);
+    }
+    case WM_MOUSELEAVE:
+    {
+        RECT rc;
+        POINT pt;
+        GetClientRect(hWin, &rc);
+        GetCursorPos(&pt);
+        ScreenToClient(hWin, &pt);
+        if ((pt.x < 0) || (pt.x >= rc.right) || (pt.y < 0) || (pt.y >= rc.bottom))
+        {
+            UpdateSectionList();
+            UpdateFSneeded = true;
+            DestroyWindow(hMovSec);
+            hMovSec = NULL;
+        }
+        return TRUE;
+    }
+    case WM_COMMAND:
+    {
+        int acpos = (int)SendMessage(hListBox, LB_GETCURSEL, 0, 0);
+        if (((HWND)lParam == hwndButtonU) && (acpos > 0))
+        {
+            if (acpos == LB_ERR) return TRUE;
+            MoveSection(acpos, -1);
+            SendMessage(hListBox, LB_RESETCONTENT, 0, 0);
+            for (UINT ti = 0; ti < MycRP.nSections; ti++)
+            {
+                SendMessageA(hListBox, LB_ADDSTRING, 0, (LPARAM)&MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
+            }
+            SendMessage(hListBox, LB_SETCURSEL, acpos - 1, 0);
+        }
+        else if (((HWND)lParam == hwndButtonD) && (acpos < (int)MycRP.nSections - 1))
+        {
+            if (acpos == LB_ERR) return TRUE;
+            MoveSection(acpos, +1);
+            SendMessage(hListBox, LB_RESETCONTENT, 0, 0);
+            for (UINT ti = 0; ti < MycRP.nSections; ti++)
+            {
+                SendMessageA(hListBox, LB_ADDSTRING, 0, (LPARAM)&MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
+                SendMessage(hListBox, LB_SETCURSEL, acpos + 1, 0);
+            }
+        }
+        else if ((HWND)lParam == hwndButtonAlpha)
+        {
+            if (MessageBoxA(hWnd, "Do you really want to reorder section according the names?", "Confirm?", MB_YESNO) == IDYES)
+            {
+                SortSections();
+                SendMessage(hListBox, LB_RESETCONTENT, 0, 0);
+                for (UINT ti = 0; ti < MycRP.nSections; ti++)
+                {
+                    SendMessageA(hListBox, LB_ADDSTRING, 0, (LPARAM)&MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
+                    SendMessage(hListBox, LB_SETCURSEL, acpos + 1, 0);
+                }
+            }
+            UpdateSectionList();
+            UpdateFSneeded = true;
+        }
+        return TRUE;
+    }
+    default:
+        return DefWindowProc(hWin, message, wParam, lParam);
+    }
+    return 0;
+}
+
 LRESULT CALLBACK WndProc(HWND hWin, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -2970,7 +3127,7 @@ void Check_Selection_Chunks(void)
             }
         }
     }
-    // then we bubble sort the selections from the end to the beginning
+    // then we sort the selections from the end to the beginning
     sSelection tmp;
     for (int ti = 0; ti < (int)nselections - 1; ti++)
     {
@@ -3028,53 +3185,81 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
                         if (MessageBoxA(hWnd, "Confirm you want to move these frames?", "Confirm", MB_YESNO) == IDYES)
                         {
                             Check_Selection_Chunks();
+                            UINT preframe = tpFrame;
                             for (UINT ti = 0; ti < nselections; ti++)
                             {
-                                Move_Frames(tpFrame, ti);
+                                Move_Frames(preframe, ti);
+                                // as we go from last sel to first, the first frame of the selections after the frame to move to but before the selection moved must be recalculated
+                                for (UINT tj = ti + 1; tj < nselections; tj++)
+                                {
+                                    if ((selections[tj].preframe > preframe) && (selections[tj].preframe < selections[ti].preframe)) selections[tj].preframe += selections[ti].nselframes;
+                                }
+                                //if (preframe<selections[ti].preframe) preframe += selections[ti].nselframes;
                             }
                             ResetMove();
+                            nselections = 1;
+                            selections[0].preframe = tpFrame;
+                            selections[0].nselframes = 1;
                             UpdateFSneeded = true;
                         }
                     }
                     else
                     {
-
-
-
-
-
-
-
-
-
-                     /*   if (mods & GLFW_MOD_SHIFT)
+                        if (mods & GLFW_MOD_CONTROL)
+                        {
+                            if (mods & GLFW_MOD_SHIFT)
+                            {
+                                //// select a range
+                                //if (selections[nselections - 1].preframe > tpFrame)
+                                //{
+                                //    selections[nselections - 1].nselframes = selections[nselections - 1].preframe - tpFrame + 1;
+                                //    selections[nselections - 1].preframe = tpFrame;
+                                //}
+                                //else selections[nselections - 1].nselframes = tpFrame - selections[nselections - 1].preframe + 1;
+                                if (acframe > tpFrame)
+                                {
+                                    selections[nselections - 1].nselframes = acframe - tpFrame + 1;
+                                    selections[nselections - 1].preframe = tpFrame;
+                                }
+                                else selections[nselections - 1].nselframes = tpFrame - acframe + 1;
+                            }
+                            else
+                            {
+                                // selecting just this frame
+                                selections[nselections].preframe = tpFrame;
+                                selections[nselections].nselframes = 1;
+                                nselections++;
+                            }
+                        }
+                        else if (mods & GLFW_MOD_SHIFT)
                         {
                             // select a range
-                            if (preframe > tpFrame)
+                            //selections[0].preframe = selections[nselections - 1].preframe;
+                            //if (selections[0].preframe > tpFrame)
+                            //{
+                            //    selections[0].nselframes = selections[0].preframe - tpFrame + 1;
+                            //    selections[0].preframe = tpFrame;
+                            //}
+                            //else selections[0].nselframes = tpFrame - selections[0].preframe + 1;
+                            selections[0].preframe = acframe;
+                            if (selections[0].preframe > tpFrame)
                             {
-                                nselframes = preframe - tpFrame + 1;
-                                preframe = tpFrame;
+                                selections[0].nselframes = selections[0].preframe - tpFrame + 1;
+                                selections[0].preframe = tpFrame;
                             }
-                            else nselframes = tpFrame - preframe + 1;
+                            else selections[0].nselframes = tpFrame - selections[0].preframe + 1;
                         }
                         else
                         {
                             // selecting just this frame
-                            preframe = tpFrame;
-                            nselframes = 1;
+                            selections[0].preframe = tpFrame;
+                            selections[0].nselframes = 1;
+                            nselections = 1;
                         }
-                        */
-
-
-
-
-
-
-
-
-
                         UpdateFSneeded = true;
                     }
+                    acframe = tpFrame;
+                    if (acframe >= PreFrameInStrip + NFrameToDraw) PreFrameInStrip = acframe - NFrameToDraw + 1;
                 }
             }
         }
@@ -3456,29 +3641,38 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                 case IDC_DELFRAMES:
                 {
                     if (MycRom.name[0] == 0) return TRUE;
+                    if (MessageBoxA(hWnd, "Confirm you want to delete these frames?", "Confirm", MB_YESNO) == IDNO) return TRUE;
                     ResetMove();
-
-
-
-
-
-
-
-
-                    //if (MessageBoxA(hWnd, "Confirm you want to delete these frames?", "Confirm", MB_YESNO) == IDYES) Del_Frames();
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
+                    //if (selections[nosel].preframe + selections[nosel].nselframes > MycRom.nFrames) return;
+                    // we first check the sections and sprites pointing to these frames
+                    Check_Selection_Chunks();
+                    for (UINT tj = 0; tj < nselections; tj++)
+                    {
+                        nfs = 0;
+                        for (UINT ti = 0; ti < MycRP.nSections; ti++)
+                        {
+                            if ((MycRP.Section_Firsts[ti] >= selections[tj].preframe) && (MycRP.Section_Firsts[ti] < selections[tj].preframe + selections[tj].nselframes))
+                            {
+                                isFirstSection[nfs] = ti;
+                                nfs++;
+                            }
+                        }
+                        nubs = 0;
+                        for (UINT ti = 0; ti < MycRom.nSprites; ti++)
+                        {
+                            if ((MycRP.Sprite_Col_From_Frame[ti] >= selections[tj].preframe) && (MycRP.Sprite_Col_From_Frame[ti] < selections[tj].preframe + selections[tj].nselframes))
+                            {
+                                isUsedBySprite[nubs] = ti;
+                                nubs++;
+                            }
+                        }
+                    }
+                    int dbres = -1;
+                    if ((nfs > 0) || (nubs > 0)) dbres = (int)DialogBox(hInst, MAKEINTRESOURCE(IDD_CHECKDEL), hWnd, CheckDel_Proc);
+                    for (UINT tj = 0; tj < nselections; tj++)
+                        Del_Frames(tj, dbres);
                     UpdateSectionList();
+                    UpdateFSneeded = true;
                     return TRUE;
                 }
                 case IDC_MOVEFRAMES:
@@ -3488,7 +3682,75 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                     UpdateSectionList();
                     return TRUE;
                 }
-                case IDC_SECTION:
+                case IDC_ADDSECTION:
+                {
+                    if (MycRom.name[0] == 0) return TRUE;
+                    int tj = is_Section_First(acframe);
+                    char tbuf[SIZE_SECTION_NAMES];
+                    GetDlgItemTextA(hwTB, IDC_NAMESECTION, tbuf, 31);
+                    tbuf[31] = 0;
+                    int tnampos = Duplicate_Section_Name(tbuf);
+                    if (tnampos > -1)
+                    {
+                        MessageBoxA(hWnd, "This name is already used for another section, action ignored.", "Caution", MB_OK);
+                        return TRUE;
+                    }
+                    if (tj > -1)
+                    {
+                        strcpy_s(&MycRP.Section_Names[SIZE_SECTION_NAMES * tj], SIZE_SECTION_NAMES, tbuf);
+                    }
+                    else
+                    {
+                        MycRP.Section_Firsts[MycRP.nSections] = acframe;
+                        strcpy_s(&MycRP.Section_Names[SIZE_SECTION_NAMES * MycRP.nSections], SIZE_SECTION_NAMES, tbuf);
+                        MycRP.nSections++;
+                    }
+                    UpdateSectionList();
+                    UpdateFSneeded = true;
+                    return TRUE;
+                }
+                case IDC_DELSECTION:
+                {
+                    int ti = Which_Section(acframe);
+                    if (ti == -1) return TRUE;
+                    char tbuf[256];
+                    sprintf_s(tbuf, 256, "Confirm you want to delete the section \"%s\" this frame is part of?", &MycRP.Section_Names[ti * SIZE_SECTION_NAMES]);
+                    if (MessageBoxA(hwTB, tbuf, "Confirm", MB_YESNO) == IDYES)
+                    {
+                        Delete_Section(ti);
+                        UpdateSectionList();
+                    }
+                    UpdateFSneeded = true;
+                    return TRUE;
+                }
+                case IDC_MOVESECTION:
+                {
+                    if (MycRom.name[0] == 0) return TRUE;
+                    RECT rc;
+                    GetWindowRect(GetDlgItem(hwTB, IDC_MOVESECTION), &rc);
+                    hMovSec = CreateWindowEx(0, L"MovSection", L"", WS_POPUP, rc.left - 50, rc.top, 300, 600, NULL, NULL, hInst, NULL);       // Parent window.
+                    if (!hMovSec)
+                    {
+                        AffLastError((char*)"Create Move Section Window");
+                        return TRUE;
+                    }
+                    ShowWindow(hMovSec, true);
+                    return TRUE;
+                }
+                case IDC_SECTIONLIST:
+                {
+                    if (MycRom.name[0] == 0) return TRUE;
+                    unsigned char acpos = (unsigned char)SendMessage(GetDlgItem(hDlg, IDC_SECTIONLIST), CB_GETCURSEL, 0, 0) - 1;
+                    if ((HIWORD(wParam) == CBN_SELCHANGE) && (acpos < MAX_SECTIONS - 1))
+                    {
+                        PreFrameInStrip = MycRP.Section_Firsts[acpos];
+                        UpdateFSneeded = true;
+                        SetDlgItemTextA(hwTB, IDC_SECTIONNAME, "");// &MycRP.Section_Names[acpos * SIZE_SECTION_NAMES]);
+                    }
+                    return TRUE;
+                }
+
+                /*case IDC_SECTION:
                 {
                     if (MycRom.name[0] == 0) return TRUE;
                     unsigned char acpos = (unsigned char)SendMessage(GetDlgItem(hDlg, IDC_SECTION), CB_GETCURSEL, 0, 0);
@@ -3498,7 +3760,7 @@ INT_PTR CALLBACK Toolbar_Proc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
                         UpdateFSneeded = true;
                     }
                     return TRUE;
-                }
+                }*/
             }
         }
     }
@@ -3542,13 +3804,16 @@ bool CreateToolbar(void)
     SetIcon(GetDlgItem(hwTB, IDC_ADDCROM), IDI_ADDCROM);
     SetIcon(GetDlgItem(hwTB, IDC_OPENTXT), IDI_OPENTXT);
     SetIcon(GetDlgItem(hwTB, IDC_ADDTXT), IDI_ADDTXT);
+    SetIcon(GetDlgItem(hwTB, IDC_ADDSECTION), IDI_ADDTAB);
+    SetIcon(GetDlgItem(hwTB, IDC_DELSECTION), IDI_DELTAB);
+    SetIcon(GetDlgItem(hwTB, IDC_MOVESECTION), IDI_MOVESECTION);
 
     SetWindowLong(GetDlgItem(hwTB, IDC_STRY1), GWL_STYLE, WS_BORDER | WS_CHILD | WS_VISIBLE | SS_BLACKRECT);
     SetWindowPos(GetDlgItem(hwTB, IDC_STRY1), 0, 0, 0, 5, 100, SWP_NOMOVE | SWP_NOZORDER);
     SetWindowLong(GetDlgItem(hwTB, IDC_STRY2), GWL_STYLE, WS_BORDER | WS_CHILD | WS_VISIBLE | SS_BLACKRECT);
     SetWindowPos(GetDlgItem(hwTB, IDC_STRY2), 0, 0, 0, 5, 100, SWP_NOMOVE | SWP_NOZORDER);
-    oldSectionFunc = (WNDPROC)GetWindowLongPtr(GetDlgItem(hwTB, IDC_SECTION), GWLP_WNDPROC);
-    SetWindowSubclass(GetDlgItem(hwTB, IDC_SECTION), (SUBCLASSPROC)SubclassSectionProc, 1, 0);
+    oldSectionFunc = (WNDPROC)GetWindowLongPtr(GetDlgItem(hwTB, IDC_SECTIONLIST), GWLP_WNDPROC);
+    SetWindowSubclass(GetDlgItem(hwTB, IDC_SECTIONLIST), (SUBCLASSPROC)SubclassSectionProc, 1, 0);
     UpdateSectionList();
 
     // to avoid beeps on key down
@@ -3651,6 +3916,25 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     ShowWindow(hWnd, SW_SHOW);
     UpdateWindow(hWnd);
 
+    WNDCLASSEX child;
+    child.cbSize = sizeof(WNDCLASSEX);
+    child.style = 0;
+    child.cbClsExtra = 0;
+    child.cbWndExtra = 0;
+    child.hInstance = hInstance;
+    child.hIcon = NULL;
+    child.hCursor = NULL;
+    child.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    child.lpszMenuName = NULL;
+    child.hIconSm = NULL;
+    child.lpfnWndProc = MovSecProc;
+    child.lpszClassName = L"MovSection";
+    if (!RegisterClassEx(&child))
+    {
+        cprintf("Call to RegisterClassEx for moving sections failed!");
+        return 1;
+    }
+
     build_crc32_table();
 
     if (!gl33_InitWindow(&glfwframestripo, 10, 10, "Original Frame Strip", hWnd)) return -1;
@@ -3706,8 +3990,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                     }
                 }
             }
-            if (!(GetKeyState(VK_LEFT) & 0x8000)) isLeftReleased = true;
-            if (!(GetKeyState(VK_RIGHT) & 0x8000)) isRightReleased = true;
             if (MycRom.name[0] != 0)
             {
                 if (UpdateFSneeded)
@@ -3741,26 +4023,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             char tbuf[256];
             POINT tpt;
             GetCursorPos(&tpt);
-
-
-
-
-
-
-
-            //sprintf_s(tbuf, 256, "SortingCDump v%i.%i (by Zedrummer)     ROM name: %s      Frame: %i->%i/%i      @%.1fFPS", MAJ_VERSION, MIN_VERSION, MycRom.name, acframe, acframe + nselframes - 1, MycRom.nFrames, fps);
-
-
-
-
-
-
-
-
-
-
-
-
+            UINT nsel = 0;
+            for (UINT ti = 0; ti < nselections; ti++) nsel += selections[ti].nselframes;
+            sprintf_s(tbuf, 256, "SortingCDump v%i.%i (by Zedrummer)     ROM name: %s      Frame: #%i/%i sel./%i tot.      @%.1fFPS", MAJ_VERSION, MIN_VERSION, MycRom.name, acframe, nsel, MycRom.nFrames, fps);
             SetWindowTextA(hWnd, tbuf);
             glfwPollEvents();
         }
