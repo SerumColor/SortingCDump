@@ -1512,31 +1512,35 @@ void Delete_Duplicate_Frame(void)
     {
         if (pDelete[ti] >= 0)
         {
-            UINT tj = tl - ti - 1;
-            for (UINT tk = 0; tk < MycRP.nSections; tk++)
+            UINT tm = ti;
+            while ((pDelete[tm] >= 0) && (tm < tl)) tm++;
+            UINT tj = tl - tm;
+            for (UINT tn = ti; tn < tm; tn++)
             {
-                if (MycRP.Section_Firsts[tk] == ti) MycRP.Section_Firsts[tk] = pDelete[ti];
+                for (UINT tk = 0; tk < MycRP.nSections; tk++)
+                {
+                    if (MycRP.Section_Firsts[tk] == tn) MycRP.Section_Firsts[tk] = pDelete[tn];
+                }
+                for (UINT tk = 0; tk < MycRom.nSprites; tk++)
+                {
+                    if (MycRP.Sprite_Col_From_Frame[tk] == tn) MycRP.Sprite_Col_From_Frame[tk] = pDelete[tn];
+                }
             }
-            for (UINT tk = 0; tk < MycRom.nSprites; tk++)
-            {
-                if (MycRP.Sprite_Col_From_Frame[tk] == ti) MycRP.Sprite_Col_From_Frame[tk] = pDelete[ti];
-            }
-            memmove(&MycRom.HashCode[ti], &MycRom.HashCode[ti + 1], tj * sizeof(UINT32));
-            memmove(&MycRom.CompMaskID[ti], &MycRom.CompMaskID[ti + 1], tj);
-            memmove(&MycRom.ShapeCompMode[ti], &MycRom.ShapeCompMode[ti + 1], tj);
-            memmove(&MycRom.MovRctID[ti], &MycRom.MovRctID[ti + 1], tj);
-            memmove(&MycRom.cPal[ti * 3 * MycRom.ncColors], &MycRom.cPal[(ti + 1) * 3 * MycRom.ncColors], tj * 3 * MycRom.ncColors);
-            memmove(&MycRom.cFrames[ti * fsize], &MycRom.cFrames[(ti + 1) * fsize], tj * fsize);
-            memmove(&MycRom.DynaMasks[ti * fsize], &MycRom.DynaMasks[(ti + 1) * fsize], tj * fsize);
-            memmove(&MycRom.Dyna4Cols[ti * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors], &MycRom.Dyna4Cols[(ti + 1) * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors], tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors);
-            memmove(&MycRom.FrameSprites[ti * MAX_SPRITES_PER_FRAME], &MycRom.FrameSprites[(ti + 1) * MAX_SPRITES_PER_FRAME], tj * MAX_SPRITES_PER_FRAME);
-            memmove(&MycRom.ColorRotations[3 * MAX_COLOR_ROTATION * ti], &MycRom.ColorRotations[3 * MAX_COLOR_ROTATION * (ti + 1)], tj);
-            memmove(&MycRom.TriggerID[ti], &MycRom.TriggerID[ti + 1], tj * sizeof(UINT32));
-            memmove(&MycRP.oFrames[ti * fsize], &MycRP.oFrames[(ti + 1) * fsize], tj * fsize);
-            memmove(&MycRP.FrameDuration[ti], &MycRP.FrameDuration[ti + 1], tj * sizeof(UINT32));
-            memmove(&pDelete[ti], &pDelete[ti + 1], tj * sizeof(int));
-            tl--;
-            ti--; // to retest the same rank as it is now the previously next rank
+            memmove(&MycRom.HashCode[ti], &MycRom.HashCode[tm], tj * sizeof(UINT32));
+            memmove(&MycRom.CompMaskID[ti], &MycRom.CompMaskID[tm], tj);
+            memmove(&MycRom.ShapeCompMode[ti], &MycRom.ShapeCompMode[tm], tj);
+            memmove(&MycRom.MovRctID[ti], &MycRom.MovRctID[tm], tj);
+            memmove(&MycRom.cPal[ti * 3 * MycRom.ncColors], &MycRom.cPal[tm * 3 * MycRom.ncColors], tj * 3 * MycRom.ncColors);
+            memmove(&MycRom.cFrames[ti * fsize], &MycRom.cFrames[tm * fsize], tj * fsize);
+            memmove(&MycRom.DynaMasks[ti * fsize], &MycRom.DynaMasks[tm * fsize], tj * fsize);
+            memmove(&MycRom.Dyna4Cols[ti * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors], &MycRom.Dyna4Cols[tm * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors], tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors);
+            memmove(&MycRom.FrameSprites[ti * MAX_SPRITES_PER_FRAME], &MycRom.FrameSprites[tm * MAX_SPRITES_PER_FRAME], tj * MAX_SPRITES_PER_FRAME);
+            memmove(&MycRom.ColorRotations[3 * MAX_COLOR_ROTATION * ti], &MycRom.ColorRotations[3 * MAX_COLOR_ROTATION * tm], tj);
+            memmove(&MycRom.TriggerID[ti], &MycRom.TriggerID[tm], tj * sizeof(UINT32));
+            memmove(&MycRP.oFrames[ti * fsize], &MycRP.oFrames[tm * fsize], tj * fsize);
+            memmove(&MycRP.FrameDuration[ti], &MycRP.FrameDuration[tm], tj * sizeof(UINT32));
+            memmove(&pDelete[ti], &pDelete[tm], tj * sizeof(int));
+            tl -= tm - ti;
         }
     }
     free(pDelete);
@@ -1901,7 +1905,7 @@ bool Load_cDump(char* path)// , char* rom)
         return false;
     }
     strcpy_s(MycRP.name, 64, MycRom.name);
-    for (UINT ti = 0; ti < MycRom.nFrames; ti++) MycRP.activeColSet[ti] = FALSE;
+    for (UINT ti = 0; ti < MAX_COL_SETS; ti++) MycRP.activeColSet[ti] = FALSE;
     memset(MycRP.ColSets, 0, MAX_COL_SETS * 16);
     MycRP.acColSet = MycRP.preColSet = 0;
     memset(MycRP.nameColSet, 0, MAX_COL_SETS * 64);
@@ -2039,8 +2043,6 @@ bool Add_cDump(char* path)
         fclose(pf);
         return false;
     }
-    for (UINT ti = MycRom.nFrames; ti < MycRom.nFrames + tnframes; ti++) MycRP.activeColSet[ti] = FALSE;
-    //-----------------
     for (UINT32 ti = MycRom.nFrames; ti < MycRom.nFrames + tnframes; ti++)
     {
         fread(&MycRP.FrameDuration[ti], sizeof(UINT32), 1, pf);
