@@ -28,12 +28,13 @@ using namespace Gdiplus;
 #include <crtdbg.h>
 #include "LiteZip.h"
 
+#pragma warning(disable : 4996)
 #pragma endregion Includes
 
 #pragma region Global_Variables
 
 #define MAJ_VERSION 1
-#define MIN_VERSION 0
+#define MIN_VERSION 5
 
 static TCHAR szWindowClass[] = _T("ColorizingDMD");
 
@@ -42,6 +43,9 @@ HWND hWnd = NULL, hwTB = NULL, hMovSec = NULL;
 UINT ColSetMode = 0, preColRot = 0, acColRot = 0; // 0- displaying colsets, 1- displaying colrots
 GLFWwindow * glfwframestripo, * glfwframestripc;	// handle+context of our window
 bool fDone = false;
+
+bool filter_time = false, filter_allmask = false, filter_color = false;
+int filter_length = 15, filter_ncolor = 16;
 
 bool ChooseMove = false;
 bool WhiteMoveButton = true;
@@ -500,13 +504,51 @@ void build_crc32_table(void) // initiating the CRC table, must be called at star
     }
 }
 
-UINT32 crc32_fast(const UINT8* so, size_t n) // computing buffer CRC32, "build_crc32_table()" must have been called before the first use
+uint32_t crc32_fast(const UINT8* s, size_t n, BOOL ShapeMode) // computing a buffer CRC32, "build_crc32_table()" must have been called before the first use
 {
-    UINT32 crc = 0xFFFFFFFF;
+    uint32_t crc = 0xFFFFFFFF;
     for (size_t i = 0; i < n; i++)
     {
-        UINT8 val = so[i];
+        UINT8 val = s[i];
+        if ((ShapeMode == TRUE) && (val > 1)) val = 1;
         crc = (crc >> 8) ^ crc32_table[(val ^ crc) & 0xFF];
+    }
+    return ~crc;
+}
+
+uint32_t crc32_fast_count(const UINT8* s, size_t n, BOOL ShapeMode, UINT8* pncols) // computing a buffer CRC32, "build_crc32_table()" must have been called before the first use
+// this version counts the number of different values found in the buffer
+{
+    *pncols = 0;
+    bool usedcolors[256];
+    memset(usedcolors, false, 256);
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < n; i++)
+    {
+        UINT8 val = s[i];
+        if (!usedcolors[val])
+        {
+            usedcolors[val] = true;
+            (*pncols)++;
+        }
+        if ((ShapeMode == TRUE) && (val > 1)) val = 1;
+        crc = (crc >> 8) ^ crc32_table[(val ^ crc) & 0xFF];
+    }
+    return ~crc;
+}
+
+uint32_t crc32_fast_mask(const UINT8* source, const UINT8* mask, size_t n, BOOL ShapeMode) // computing a buffer CRC32 on the non-masked area, "build_crc32_table()" must have been called before the first use
+// take into account if we are in shape mode
+{
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < n; i++)
+    {
+        if (mask[i] == 0)
+        {
+            UINT8 val = source[i];
+            if ((ShapeMode == TRUE) && (val > 1)) val = 1;
+            crc = (crc >> 8) ^ crc32_table[(val ^ crc) & 0xFF];
+        }
     }
     return ~crc;
 }
@@ -1483,31 +1525,53 @@ void Free_Project(void)
     Free_cRom();
 }
 
-void Delete_Duplicate_Frame(void)
+void Apply_Filters_Frames(void)
 {
+    UINT nfremoved = 0;
+    UINT nfrremtime = 0, nfrremcol = 0, nfrremsame = 0;
+    UINT32 nFrames = MycRom.nFrames;
+
     selections[0].preframe = 0;
     selections[0].nselframes = 1;
     nselections = 1;
 
     int* pDelete = (int*)malloc(MycRom.nFrames * sizeof(int));
     if (!pDelete) return;
-    UINT32 nDeleted = 0;
-    for (UINT32 ti = 0; ti < MycRom.nFrames; ti++) pDelete[ti] = -1;
+    //UINT32 nDeleted = 0;
+    for (UINT32 ti = 0; ti < MycRom.nFrames; ti++)
+    {
+        UINT8 ncols;
+        pDelete[ti] = -1;
+        MycRom.HashCode[ti] = crc32_fast_count(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, FALSE, &ncols);
+        if (filter_color && (ncols > filter_ncolor))
+        {
+            pDelete[ti] = 0;
+            nfremoved++;
+            nfrremcol++;
+        }
+    }
     for (UINT ti = 0; ti < MycRom.nFrames - 1; ti++)
     {
         if (pDelete[ti] >= 0) continue;
+        if (filter_time && ((int)MycRP.FrameDuration[ti] < filter_length))
+        {
+            pDelete[ti] = 0;
+            nfremoved++;
+            nfrremtime++;
+        }
         for (UINT tj = ti + 1; tj < MycRom.nFrames; tj++)
         {
             if (pDelete[tj] >= 0) continue;
             if (MycRom.HashCode[ti] == MycRom.HashCode[tj])
             {
                 pDelete[tj] = ti;
-                nDeleted++;
+                nfremoved++;
+                nfrremsame++;
             }
         }
     }
-    UINT tl = MycRom.nFrames; // n frames remaining, so to copy
     const UINT fsize = MycRom.fWidth * MycRom.fHeight;
+    UINT tl = MycRom.nFrames; // n frames remaining, so to copy
     for (UINT ti = 0; ti < tl; ti++)
     {
         if (pDelete[ti] >= 0)
@@ -1515,7 +1579,7 @@ void Delete_Duplicate_Frame(void)
             UINT tm = ti;
             while ((pDelete[tm] >= 0) && (tm < tl)) tm++;
             UINT tj = tl - tm;
-            for (UINT tn = ti; tn < tm; tn++)
+            /*for (UINT tn = ti; tn < tm; tn++)
             {
                 for (UINT tk = 0; tk < MycRP.nSections; tk++)
                 {
@@ -1525,7 +1589,7 @@ void Delete_Duplicate_Frame(void)
                 {
                     if (MycRP.Sprite_Col_From_Frame[tk] == tn) MycRP.Sprite_Col_From_Frame[tk] = pDelete[tn];
                 }
-            }
+            }*/
             memmove(&MycRom.HashCode[ti], &MycRom.HashCode[tm], tj * sizeof(UINT32));
             memmove(&MycRom.CompMaskID[ti], &MycRom.CompMaskID[tm], tj);
             memmove(&MycRom.ShapeCompMode[ti], &MycRom.ShapeCompMode[tm], tj);
@@ -1558,7 +1622,176 @@ void Delete_Duplicate_Frame(void)
     MycRom.TriggerID = (UINT32*)realloc(MycRom.TriggerID, tl * sizeof(UINT32));
     MycRP.oFrames = (UINT8*)realloc(MycRP.oFrames, tl * fsize);
     MycRP.FrameDuration = (UINT32*)realloc(MycRP.FrameDuration, tl * sizeof(UINT32));
-    cprintf("%i frames deleted as duplicate, %i frames remaining", nDeleted,MycRom.nFrames);
+    cprintf("%i frames removed (%i for short duration, %i for too many colors, %i identical), %i added", nfremoved, nfrremtime, nfrremcol, nfrremsame, nFrames - nfremoved);
+    UpdateFSneeded = true;
+}
+
+void Apply_Filters_Extra_Frames(UINT32 nold, UINT32 nnew)
+{
+    UINT nfremoved = 0;
+    UINT nfrremtime = 0, nfrremcol = 0, nfrremsame = 0, nfrremmask = 0;
+    UINT32 nFrames = MycRom.nFrames;
+
+    selections[0].preframe = 0;
+    selections[0].nselframes = 1;
+    nselections = 1;
+
+    int* pDelete = (int*)malloc(nnew * sizeof(int));
+    if (!pDelete) return;
+    for (UINT32 ti = 0; ti < nnew; ti++)
+    {
+        UINT8 ncols;
+        pDelete[ti] = -1;
+        MycRom.HashCode[nold + ti] = crc32_fast_count(&MycRP.oFrames[(nold + ti) * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, FALSE, &ncols);
+        if (filter_color && (ncols > filter_ncolor))
+        {
+            pDelete[ti] = 0;
+            nfremoved++;
+            nfrremcol++;
+            break;
+        }
+        if (filter_time && ((int)MycRP.FrameDuration[nold + ti] < filter_length))
+        {
+            pDelete[ti] = 0;
+            nfremoved++;
+            nfrremtime++;
+        }
+    }
+    for (UINT32 ti = 0; ti < nnew - 1; ti++)
+    {
+        if (pDelete[ti] >= 0) continue;
+        for (UINT32 tj = ti + 1; tj < nnew; tj++)
+        {
+            if (pDelete[tj] >= 0) continue;
+            if (MycRom.HashCode[ti + nold] == MycRom.HashCode[tj + nold])
+            {
+                pDelete[tj] = 0;
+                nfremoved++;
+                nfrremsame++;
+            }
+        }
+    }
+    // calculate the hashes for the old frames
+    UINT32* pnomaskhash = (UINT32*)malloc(sizeof(UINT32) * nold);
+    if (!pnomaskhash)
+    {
+        MessageBoxA(hWnd, "Impossible to get memory for flat hashes, incomplete comparison!", "Error", MB_OK);
+        free(pDelete);
+        return;
+    }
+    for (int ti = 0; ti < (int)nold; ti++)
+    {
+        if (MycRom.CompMaskID[ti] != 255)
+        {
+            MycRom.HashCode[ti] = crc32_fast_mask(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], &MycRom.CompMasks[MycRom.CompMaskID[ti] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
+            pnomaskhash[ti] = crc32_fast(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
+        }
+        else
+        {
+            MycRom.HashCode[ti] = crc32_fast(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
+            if (MycRom.ShapeCompMode[ti] == FALSE) pnomaskhash[ti] = MycRom.HashCode[ti];
+            else pnomaskhash[ti] = crc32_fast(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
+        }
+    }
+
+    // then compare the new frames with the previous ones
+    for (unsigned int ti = 0; ti < (int)nnew; ti++)
+    {
+        if (pDelete[ti + nold] >= 0) continue;
+        UINT8 premask = 255;
+        BOOL isshapemode = FALSE;
+        UINT32 achash = crc32_fast((UINT8*)MycRP.oFrames, MycRom.fWidth * MycRom.fHeight, FALSE);
+        for (int tj = 0; tj < (int)nold; tj++)
+        {
+            if ((MycRom.CompMaskID[tj] != 255) && filter_allmask)
+            {
+                if ((premask != MycRom.CompMaskID[tj]) || (isshapemode != (BOOL)MycRom.ShapeCompMode[tj]))
+                {
+                    achash = crc32_fast_mask(&MycRP.oFrames[(ti + nold) * MycRom.fWidth * MycRom.fHeight], &MycRom.CompMasks[MycRom.CompMaskID[tj] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[tj]);
+                    premask = MycRom.CompMaskID[tj];
+                    isshapemode = (BOOL)MycRom.ShapeCompMode[tj];
+                }
+                if (MycRom.HashCode[tj] == achash)
+                {
+                    pDelete[ti] = tj;
+                    nfrremmask++;
+                    nfremoved++;
+                    break;
+                }
+            }
+            else if (filter_allmask && (MycRom.ShapeCompMode[tj] == TRUE))
+            {
+                if ((premask != 255) || (isshapemode == FALSE))
+                {
+                    achash = crc32_fast(&MycRP.oFrames[(ti + nold) * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, TRUE);
+                    premask = 255;
+                    isshapemode = TRUE;
+                }
+                if (MycRom.HashCode[tj] == achash)
+                {
+                    pDelete[ti] = tj;
+                    nfrremmask++;
+                    nfremoved++;
+                    break;
+                }
+            }
+            else
+            {
+                if (pnomaskhash[tj] == MycRom.HashCode[nold + ti])
+                {
+                    pDelete[ti] = tj;
+                    nfrremsame++;
+                    nfremoved++;
+                    break;
+                }
+            }
+        }
+    }
+
+    const UINT fsize = MycRom.fWidth * MycRom.fHeight;
+    UINT tl = nnew; // n frames remaining, so to copy
+    for (UINT ti = 0; ti < tl; ti++)
+    {
+        if (pDelete[ti] >= 0)
+        {
+            UINT tm = ti;
+            while ((pDelete[tm] >= 0) && (tm < tl)) tm++;
+            UINT tj = tl - tm;
+            memmove(&MycRom.HashCode[ti + nold], &MycRom.HashCode[tm + nold], tj * sizeof(UINT32));
+            memmove(&MycRom.CompMaskID[ti + nold], &MycRom.CompMaskID[tm + nold], tj);
+            memmove(&MycRom.ShapeCompMode[ti + nold], &MycRom.ShapeCompMode[tm + nold], tj);
+            memmove(&MycRom.MovRctID[ti + nold], &MycRom.MovRctID[tm + nold], tj);
+            memmove(&MycRom.cPal[(ti + nold) * 3 * MycRom.ncColors], &MycRom.cPal[(tm + nold) * 3 * MycRom.ncColors], tj * 3 * MycRom.ncColors);
+            memmove(&MycRom.cFrames[(ti + nold) * fsize], &MycRom.cFrames[(tm + nold) * fsize], tj * fsize);
+            memmove(&MycRom.DynaMasks[(ti + nold) * fsize], &MycRom.DynaMasks[(tm + nold) * fsize], tj * fsize);
+            memmove(&MycRom.Dyna4Cols[(ti + nold) * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors], &MycRom.Dyna4Cols[(tm + nold) * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors], tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors);
+            memmove(&MycRom.FrameSprites[(ti + nold) * MAX_SPRITES_PER_FRAME], &MycRom.FrameSprites[(tm + nold) * MAX_SPRITES_PER_FRAME], tj * MAX_SPRITES_PER_FRAME);
+            memmove(&MycRom.ColorRotations[3 * MAX_COLOR_ROTATION * (ti + nold)], &MycRom.ColorRotations[3 * MAX_COLOR_ROTATION * (tm + nold)], tj);
+            memmove(&MycRom.TriggerID[ti + nold], &MycRom.TriggerID[tm + nold], tj * sizeof(UINT32));
+            memmove(&MycRP.oFrames[(ti + nold) * fsize], &MycRP.oFrames[(tm + nold) * fsize], tj * fsize);
+            memmove(&MycRP.FrameDuration[ti + nold], &MycRP.FrameDuration[tm + nold], tj * sizeof(UINT32));
+            memmove(&pDelete[ti + nold], &pDelete[tm + nold], tj * sizeof(int));
+            tl -= tm - ti;
+        }
+    }
+    free(pDelete);
+    free(pnomaskhash);
+    tl += nold;
+    MycRom.nFrames = tl;
+    MycRom.HashCode = (UINT32*)realloc(MycRom.HashCode, tl * sizeof(UINT32));
+    MycRom.CompMaskID = (UINT8*)realloc(MycRom.CompMaskID, tl);
+    MycRom.ShapeCompMode = (UINT8*)realloc(MycRom.ShapeCompMode, tl);
+    MycRom.MovRctID = (UINT8*)realloc(MycRom.MovRctID, tl);
+    MycRom.cPal = (UINT8*)realloc(MycRom.cPal, tl * 3 * MycRom.ncColors);
+    MycRom.cFrames = (UINT8*)realloc(MycRom.cFrames, tl * fsize);
+    MycRom.DynaMasks = (UINT8*)realloc(MycRom.DynaMasks, tl * fsize);
+    MycRom.Dyna4Cols = (UINT8*)realloc(MycRom.Dyna4Cols, tl * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors);
+    MycRom.FrameSprites = (UINT8*)realloc(MycRom.FrameSprites, tl * MAX_SPRITES_PER_FRAME);
+    MycRom.ColorRotations = (UINT8*)realloc(MycRom.ColorRotations, tl * 3 * MAX_COLOR_ROTATION);
+    MycRom.TriggerID = (UINT32*)realloc(MycRom.TriggerID, tl * sizeof(UINT32));
+    MycRP.oFrames = (UINT8*)realloc(MycRP.oFrames, tl * fsize);
+    MycRP.FrameDuration = (UINT32*)realloc(MycRP.FrameDuration, tl * sizeof(UINT32));
+    cprintf("%i frames removed (%i for short duration, %i for too many colors, %i identical, %i after applying masks), %i added", nfremoved, nfrremtime, nfrremcol, nfrremsame, nfrremmask, nFrames - nfremoved);
     UpdateFSneeded = true;
 }
 
@@ -1571,7 +1804,11 @@ bool Save_cRom(char* path)
         cprintf("Can't get memory for active frames. Action canceled");
         return false;
     }
-    for (UINT32 ti = 0; ti < MycRom.nFrames; ti++) MycRom.HashCode[ti] = 0;
+    for (UINT32 ti = 0; ti < MycRom.nFrames; ti++)
+    {
+        if (MycRom.CompMaskID[ti] == 255) MycRom.HashCode[ti] = crc32_fast(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, MycRom.ShapeCompMode[ti]);
+        else MycRom.HashCode[ti] = crc32_fast_mask(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], &MycRom.CompMasks[MycRom.CompMaskID[ti] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, MycRom.ShapeCompMode[ti]);
+    }
     // Save the cRom file
     char tbuf[MAX_PATH];
     sprintf_s(tbuf, MAX_PATH, "%s%s.cROM", path, MycRom.name);
@@ -1777,10 +2014,10 @@ bool Load_cRP(char* name)
     }
     fread(MycRP.name, 1, 64, pfile);
     fread(MycRP.oFrames, 1, MycRom.nFrames * MycRom.fWidth * MycRom.fHeight, pfile);
-    for (UINT32 ti = 0; ti < MycRom.nFrames; ti++)
+    /*for (UINT32 ti = 0; ti < MycRom.nFrames; ti++)
     {
         MycRom.HashCode[ti] = crc32_fast(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight);
-    }
+    }*/
     fread(MycRP.activeColSet, sizeof(BOOL), MAX_COL_SETS, pfile);
     fread(MycRP.ColSets, sizeof(UINT8), MAX_COL_SETS * 16, pfile);
     fread(&MycRP.acColSet, sizeof(UINT8), 1, pfile);
@@ -1808,12 +2045,123 @@ bool Load_cRP(char* name)
     return true;
 }
 
+LRESULT CALLBACK Filter_Proc(HWND hwDlg, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (Msg)
+    {
+    case WM_INITDIALOG:
+    {
+        SendMessage(GetDlgItem(hwDlg, IDC_DELTIME), BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessage(GetDlgItem(hwDlg, IDC_DELMASK), BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessage(GetDlgItem(hwDlg, IDC_DELCOL), BM_SETCHECK, BST_UNCHECKED, 0);
+        EnableWindow(GetDlgItem(hwDlg, IDC_TIMELEN), FALSE);
+        EnableWindow(GetDlgItem(hwDlg, IDC_NCOL), FALSE);
+        if (lParam == 0) EnableWindow(GetDlgItem(hwDlg, IDC_DELMASK), TRUE); else EnableWindow(GetDlgItem(hwDlg, IDC_DELMASK), FALSE);
+    }
+    case WM_COMMAND:
+    {
+        switch (wParam)
+        {
+        case IDC_DELTIME:
+        {
+            if (SendMessage(GetDlgItem(hwDlg, IDC_DELTIME), BM_GETCHECK, 0, 0) == BST_UNCHECKED) EnableWindow(GetDlgItem(hwDlg, IDC_TIMELEN), FALSE);
+            else EnableWindow(GetDlgItem(hwDlg, IDC_TIMELEN), TRUE);
+            return TRUE;
+        }
+        case IDC_DELCOL:
+        {
+            if (SendMessage(GetDlgItem(hwDlg, IDC_DELCOL), BM_GETCHECK, 0, 0) == BST_UNCHECKED) EnableWindow(GetDlgItem(hwDlg, IDC_NCOL), FALSE);
+            else EnableWindow(GetDlgItem(hwDlg, IDC_NCOL), TRUE);
+            return TRUE;
+        }
+        case IDOK:
+        {
+            bool istimemod = false;
+            bool iscolmod = false;
+            if (SendMessage(GetDlgItem(hwDlg, IDC_DELTIME), BM_GETCHECK, 0, 0) == BST_CHECKED)
+            {
+                char tbuf[256];
+                filter_time = true;
+                GetWindowTextA(GetDlgItem(hwDlg, IDC_TIMELEN), tbuf, 256);
+                filter_length = atoi(tbuf);
+                if (filter_length < 5)
+                {
+                    filter_length = 5;
+                    _itoa_s(filter_length, tbuf, 256, 10);
+                    SetWindowTextA(GetDlgItem(hwDlg, IDC_TIMELEN), tbuf);
+                    istimemod = true;
+                }
+                else if (filter_length > 3000)
+                {
+                    filter_length = 3000;
+                    _itoa_s(filter_length, tbuf, 256, 10);
+                    SetWindowTextA(GetDlgItem(hwDlg, IDC_TIMELEN), tbuf);
+                    istimemod = true;
+                }
+            }
+            else filter_time = false;
+            if (SendMessage(GetDlgItem(hwDlg, IDC_DELCOL), BM_GETCHECK, 0, 0) == BST_CHECKED)
+            {
+                char tbuf[256];
+                filter_color = true;
+                GetWindowTextA(GetDlgItem(hwDlg, IDC_NCOL), tbuf, 256);
+                filter_ncolor = atoi(tbuf);
+                if (filter_ncolor < 1)
+                {
+                    filter_ncolor = 1;
+                    _itoa_s(filter_ncolor, tbuf, 256, 10);
+                    SetWindowTextA(GetDlgItem(hwDlg, IDC_NCOL), tbuf);
+                    iscolmod = true;
+                }
+                else if (filter_ncolor > 16)
+                {
+                    filter_ncolor = 16;
+                    _itoa_s(filter_ncolor, tbuf, 256, 10);
+                    SetWindowTextA(GetDlgItem(hwDlg, IDC_NCOL), tbuf);
+                    iscolmod = true;
+                }
+            }
+            else filter_color = false;
+            if (SendMessage(GetDlgItem(hwDlg, IDC_DELMASK), BM_GETCHECK, 0, 0) == BST_CHECKED) filter_allmask = true; else filter_allmask = false;
+            if (istimemod && iscolmod)
+            {
+                MessageBoxA(hWnd, "The time length and number of colors values have been automatically changed, check them and confirm again", "Confirm", MB_OK);
+                return TRUE;
+            }
+            else if (istimemod)
+            {
+                MessageBoxA(hWnd, "The time length value has been automatically changed, check it and confirm again", "Confirm", MB_OK);
+                return TRUE;
+            }
+            else if (iscolmod)
+            {
+                MessageBoxA(hWnd, "The number of colors value has been automatically changed, check it and confirm again", "Confirm", MB_OK);
+                return TRUE;
+            }
+            EndDialog(hwDlg, 0);
+            return TRUE;
+        }
+        case IDCANCEL:
+        {
+            EndDialog(hwDlg, -1);
+            return TRUE;
+        }
+        }
+    }
+    }
+    return FALSE;
+}
+
 bool Load_cDump(char* path)// , char* rom)
 {
     /*char tbuf[MAX_PATH];
     sprintf_s(tbuf, MAX_PATH, "%s%s.cdump", path, rom);*/
     cprintf("\r\n----------------------------------\r\n");
 #pragma warning(suppress : 4996)
+    if (DialogBoxParam(hInst, MAKEINTRESOURCE(IDD_FILTERS), hWnd, Filter_Proc, (LPARAM)1) == -1)
+    {
+        return false;
+    }
     FILE* pf = fopen(path, "rb");
     if (pf == 0)
     {
@@ -1875,7 +2223,7 @@ bool Load_cDump(char* path)// , char* rom)
     {
         for (UINT ti = 0; ti < MAX_DYNA_SETS_PER_FRAME; ti++)
         {
-            for (UINT tk = 0; tk < MycRom.noColors; tk++) MycRom.Dyna4Cols[tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + ti * MycRom.noColors + tk] = (UINT8)(ti * MycRom.noColors + tk);
+            for (UINT tk = 0; tk < MycRom.noColors; tk++) MycRom.Dyna4Cols[tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + ti * MycRom.noColors + tk] = (UINT8)((ti * MycRom.noColors + tk) % 64);
         }
     }
     memset(MycRom.FrameSprites, 255, MycRom.nFrames * MAX_SPRITES_PER_FRAME);
@@ -1931,7 +2279,6 @@ bool Load_cDump(char* path)// , char* rom)
         if (ti == MycRom.nFrames - 1) MycRP.FrameDuration[ti] = 3000;
         fread(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], 1, MycRom.fWidth * MycRom.fHeight, pf);
         fread(&MycRom.cFrames[ti * MycRom.fWidth * MycRom.fHeight], 1, MycRom.fWidth * MycRom.fHeight, pf);
-        MycRom.HashCode[ti] = crc32_fast(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight);
         fread(&MycRom.cPal[ti * 3 * MycRom.ncColors], 1, 3 * MycRom.ncColors, pf);
     }
     unsigned char maxocol = 0;
@@ -1950,13 +2297,17 @@ bool Load_cDump(char* path)// , char* rom)
     Calc_Resize_Frame();
     UpdateFSneeded = true;
     cprintf("Color Dump %s with %i frames loaded successfully", path, MycRom.nFrames);
-    Delete_Duplicate_Frame();
+    Apply_Filters_Frames();
     return true;
 }
 
 bool Add_cDump(char* path)
 {
 #pragma warning(suppress : 4996)
+    if (DialogBoxParam(hInst, MAKEINTRESOURCE(IDD_FILTERS), hWnd, Filter_Proc, (LPARAM)0) == -1)
+    {
+        return false;
+    }
     FILE* pf = fopen(path, "rb");
     if (pf == 0)
     {
@@ -2018,7 +2369,7 @@ bool Add_cDump(char* path)
     {
         for (UINT ti = 0; ti < MAX_DYNA_SETS_PER_FRAME; ti++)
         {
-            for (UINT tk = 0; tk < MycRom.noColors; tk++) MycRom.Dyna4Cols[MycRom.nFrames * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + ti * MycRom.noColors + tk] = (UINT8)(ti * MycRom.noColors + tk);
+            for (UINT tk = 0; tk < MycRom.noColors; tk++) MycRom.Dyna4Cols[MycRom.nFrames * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + tj * MAX_DYNA_SETS_PER_FRAME * MycRom.noColors + ti * MycRom.noColors + tk] = (UINT8)((ti * MycRom.noColors + tk) % 64);
         }
     }
     memset(&MycRom.FrameSprites[MycRom.nFrames * MAX_SPRITES_PER_FRAME], 255, tnframes * MAX_SPRITES_PER_FRAME);
@@ -2050,7 +2401,6 @@ bool Add_cDump(char* path)
         if (ti == MycRom.nFrames + tnframes - 1) MycRP.FrameDuration[ti] = 3000;
         fread(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], 1, MycRom.fWidth * MycRom.fHeight, pf);
         fread(&MycRom.cFrames[ti * MycRom.fWidth * MycRom.fHeight], 1, MycRom.fWidth * MycRom.fHeight, pf);
-        MycRom.HashCode[ti] = crc32_fast(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight);
         fread(&MycRom.cPal[ti * 3 * MycRom.ncColors], 1, 3 * MycRom.ncColors, pf);
     }
     fclose(pf);
@@ -2058,7 +2408,7 @@ bool Add_cDump(char* path)
     Calc_Resize_Frame();
     UpdateFSneeded = true;
     cprintf("Color Dump %s with %i frames added successfully", path, MycRom.nFrames);
-    Delete_Duplicate_Frame();
+    Apply_Filters_Extra_Frames(MycRom.nFrames, tnframes);
     return true;
 }
 
@@ -2132,7 +2482,6 @@ bool Get_Frames_Ptr_Size_And_Number_Of_Colors(sFrames** ppFrames, UINT nFrames, 
                 while (((*pPos) == '\n') || ((*pPos) == '\r')) pPos++;
             }
             curPos = pPos - TXTF_buffer;
-            pFrames[acFr].hashcode = crc32_fast((UINT8*)pFrames[acFr].ptr, MycRom.fHeight * MycRom.fWidth);
             acFr++;
         }
     }
@@ -2162,30 +2511,45 @@ bool Parse_TXT(char* TXTF_name, char* TXTF_buffer, size_t TXTF_buffer_len, sFram
 
 void CompareFrames(UINT nFrames, sFrames* pFrames)
 {
-    //HWND hDlg = Display_Wait("Wait please...");
+    // We have a block of sFrames with pointers to frames decoded ('a'->10, '1'->1, etc..., and with no CR and LF), active is set to TRUE and
+    // the timecode is the value from the TXT file
+    // we need to filter the frames according what has been checked in the IID_FILTERS dialog and to change the value of timecode so that this is the
+    // time span the frame has been displayed
+
     UINT nfremoved = 0;
-    // Compare all the frames of a txt file (ignoring masks) to remove copy frames
-    if (nFrames < 2) return;
-    for (int ti = 0; ti < (int)nFrames - 1; ti++)
+    UINT nfrremtime = 0, nfrremcol = 0, nfrremsame = 0;
+    for (int ti = 0; ti < (int)nFrames; ti++)
     {
-        if (pFrames[ti].active == FALSE) continue;
-        for (int tj = ti + 1; tj < (int)nFrames; tj++)
+        if (ti < (int)nFrames - 1)
         {
-            if (pFrames[tj].active == FALSE) continue;
-            if (pFrames[ti].hashcode==pFrames[tj].hashcode)
+            UINT32 nextfrlen = pFrames[ti + 1].timecode;
+            UINT32 acfrlen = pFrames[ti].timecode;
+            if (nextfrlen < acfrlen) pFrames[ti].timecode = 30;
+            else if (nextfrlen > acfrlen + 4000) pFrames[ti].timecode = 30;
+            else
             {
-                pFrames[tj].active = FALSE;
-                nfremoved++;
+                pFrames[ti].timecode = nextfrlen - acfrlen;
+                if (filter_time && (pFrames[ti].timecode < (UINT32)filter_length) && pFrames[ti].active)
+                {
+                    nfrremtime++;
+                    nfremoved++;
+                    pFrames[ti].active = FALSE;
+                    continue;
+                }
             }
         }
+        else pFrames[ti].timecode = 30;
+        // we check the number of colors in each frame if needed and do the no-mask-hash calculations at the same time
+        UINT8 ncols;
+        pFrames[ti].hashcode = crc32_fast_count((UINT8*)pFrames[ti].ptr, MycRom.fWidth * MycRom.fHeight, FALSE, &ncols);
+        if (filter_color && (filter_ncolor < ncols) && pFrames[ti].active)
+        {
+            nfrremcol++;
+            nfremoved++;
+            pFrames[ti].active = FALSE;
+            continue;
+        }
     }
-    cprintf("%i frames removed as duplicate, %i added", nfremoved, nFrames - nfremoved);
-}
-
-void CompareAdditionalFrames(UINT nFrames, sFrames* pFrames)
-{
-    UINT nfremoved = 0;
-    // first compare the new frames between them
     if (nFrames < 2) return;
     for (int ti = 0; ti < (int)nFrames - 1; ti++)
     {
@@ -2195,27 +2559,146 @@ void CompareAdditionalFrames(UINT nFrames, sFrames* pFrames)
             if (pFrames[tj].active == FALSE) continue;
             if (pFrames[ti].hashcode == pFrames[tj].hashcode)
             {
-                pFrames[tj].active = FALSE;
+                nfrremsame++;
                 nfremoved++;
+                pFrames[tj].active = FALSE;
             }
+        }
+    }
+    cprintf("%i frames removed (%i for short duration, %i for too many colors, %i identical), %i added", nfremoved, nfrremtime, nfrremcol, nfrremsame, nFrames - nfremoved);
+}
+
+void CompareAdditionalFrames(UINT nFrames, sFrames* pFrames)
+{
+    //HWND hDlg = Display_Wait("Please wait...");
+    // Compare the new frames of a txt file to the previous and new ones to remove copy frames
+    //unsigned int nfkilled = 0;
+    UINT nfremoved = 0;
+    UINT nfrremtime = 0, nfrremcol = 0, nfrremmask = 0, nfrremsame = 0;
+    // first compare the new frames between them
+    for (int ti = 0; ti < (int)nFrames; ti++)
+    {
+        if (ti < (int)nFrames - 1)
+        {
+            UINT32 nextfrlen = pFrames[ti + 1].timecode;
+            UINT32 acfrlen = pFrames[ti].timecode;
+            if (nextfrlen < acfrlen) pFrames[ti].timecode = 30;
+            else if (nextfrlen > acfrlen + 4000) pFrames[ti].timecode = 30;
+            else
+            {
+                pFrames[ti].timecode = nextfrlen - acfrlen;
+                if (filter_time && (pFrames[ti].timecode < (UINT32)filter_length) && pFrames[ti].active)
+                {
+                    nfrremtime++;
+                    nfremoved++;
+                    pFrames[ti].active = FALSE;
+                    continue;
+                }
+            }
+        }
+        else pFrames[ti].timecode = 30;
+        // we check the number of colors in each frame if needed and do the no-mask-hash calculations at the same time
+        UINT8 ncols;
+        pFrames[ti].hashcode = crc32_fast_count((UINT8*)pFrames[ti].ptr, MycRom.fWidth * MycRom.fHeight, FALSE, &ncols);
+        if (filter_color && (filter_ncolor < ncols) && pFrames[ti].active)
+        {
+            nfrremcol++;
+            nfremoved++;
+            pFrames[ti].active = FALSE;
+            continue;
+        }
+    }
+    if (nFrames < 2) return;
+    for (int ti = 0; ti < (int)nFrames - 1; ti++)
+    {
+        if (pFrames[ti].active == FALSE) continue;
+        for (int tj = ti + 1; tj < (int)nFrames; tj++)
+        {
+            if (pFrames[tj].active == FALSE) continue;
+            if (pFrames[ti].hashcode == pFrames[tj].hashcode)
+            {
+                nfrremsame++;
+                nfremoved++;
+                pFrames[tj].active = FALSE;
+            }
+        }
+    }
+    // calculate the hashes for the old frames
+    UINT32* pnomaskhash = (UINT32*)malloc(sizeof(UINT32) * MycRom.nFrames);
+    if (!pnomaskhash)
+    {
+        MessageBoxA(hWnd, "Impossible to get memory for flat hashes, incomplete comparison!", "Error", MB_OK);
+        return;
+    }
+    for (int ti = 0; ti < (int)MycRom.nFrames; ti++)
+    {
+        if (MycRom.CompMaskID[ti] != 255)
+        {
+            MycRom.HashCode[ti] = crc32_fast_mask(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], &MycRom.CompMasks[MycRom.CompMaskID[ti] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
+            pnomaskhash[ti] = crc32_fast(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
+        }
+        else
+        {
+            MycRom.HashCode[ti] = crc32_fast(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
+            if (MycRom.ShapeCompMode[ti] == FALSE) pnomaskhash[ti] = MycRom.HashCode[ti];
+            else pnomaskhash[ti] = crc32_fast(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
         }
     }
     // then compare the new frames with the previous ones
     for (unsigned int ti = 0; ti < nFrames; ti++)
     {
-        //on compare 2 frames ici
+        if (pFrames[ti].active == FALSE) continue;
+        UINT8 premask = 255;
+        BOOL isshapemode = FALSE;
+        UINT32 achash = crc32_fast((UINT8*)pFrames[ti].ptr, MycRom.fWidth * MycRom.fHeight, FALSE);
         for (int tj = 0; tj < (int)MycRom.nFrames; tj++)
         {
-            if (pFrames[ti].active == FALSE) continue;
-            if (pFrames[ti].hashcode == MycRom.HashCode[tj])
+            if ((MycRom.CompMaskID[tj] != 255) && filter_allmask)
             {
-                pFrames[ti].active = FALSE;
-                nfremoved++;
+                if ((premask != MycRom.CompMaskID[tj]) || (isshapemode != (BOOL)MycRom.ShapeCompMode[tj]))
+                {
+                    achash = crc32_fast_mask((UINT8*)pFrames[ti].ptr, &MycRom.CompMasks[MycRom.CompMaskID[tj] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[tj]);
+                    premask = MycRom.CompMaskID[tj];
+                    isshapemode = (BOOL)MycRom.ShapeCompMode[tj];
+                }
+                if (MycRom.HashCode[tj] == achash)
+                {
+                    pFrames[ti].active = FALSE;
+                    nfrremmask++;
+                    nfremoved++;
+                    break;
+                }
+            }
+            else if (filter_allmask && (MycRom.ShapeCompMode[tj] == TRUE))
+            {
+                if ((premask != 255) || (isshapemode == FALSE))
+                {
+                    achash = crc32_fast((UINT8*)pFrames[ti].ptr, MycRom.fWidth * MycRom.fHeight, TRUE);
+                    premask = 255;
+                    isshapemode = TRUE;
+                }
+                if (MycRom.HashCode[tj] == achash)
+                {
+                    pFrames[ti].active = FALSE;
+                    nfrremmask++;
+                    nfremoved++;
+                    break;
+                }
+            }
+            else
+            {
+                if (pnomaskhash[tj] == pFrames[ti].hashcode)
+                {
+                    pFrames[ti].active = FALSE;
+                    nfrremsame++;
+                    nfremoved++;
+                    break;
+                }
             }
         }
     }
-    cprintf("%i frames removed as duplicate, %i added", nfremoved, nFrames - nfremoved);
-    //DestroyWindow(hDlg);
+    free(pnomaskhash);
+    cprintf("%i frames removed (%i for short duration, %i for too many colors, %i identical with mask and/or shapemode, %i identical) %i added", nfremoved, nfrremtime, nfrremcol, nfrremmask, nfrremsame, nFrames - nfremoved);
 }
 
 void Init_cFrame_Palette(UINT8* pPal)
@@ -2262,6 +2745,7 @@ bool CopyTXTFrames2Frame(UINT nFrames, sFrames* pFrames)
         cprintf("Unable to allocate memory for hashtags");
         return false;
     }
+    memset(MycRom.HashCode, 0, nF * sizeof(UINT));
     MycRom.ShapeCompMode = (UINT8*)malloc(nF);
     if (!MycRom.ShapeCompMode)
     {
@@ -2425,7 +2909,8 @@ bool AddTXTFrames2Frame(UINT nFrames, sFrames* pFrames)
         cprintf("Unable to reallocate memory for hashcodes");
         return false;
     }
-    MycRom.ShapeCompMode = (UINT8*)realloc(MycRom.ShapeCompMode, nF + MycRom.nFrames);
+    memset(MycRom.HashCode, 0, nF * sizeof(UINT));
+    MycRom.ShapeCompMode = (UINT8*)realloc(MycRom.ShapeCompMode, (nF + MycRom.nFrames) + MycRom.nFrames);
     if (!MycRom.ShapeCompMode)
     {
         Free_cRom();
@@ -2576,6 +3061,10 @@ void Load_TXT_File(void)
 
     if (GetOpenFileNameA(&ofn) == TRUE)
     {
+        if (DialogBoxParam(hInst, MAKEINTRESOURCE(IDD_FILTERS), hWnd, Filter_Proc, (LPARAM)1) == -1)
+        {
+            return;
+        }
         strcpy_s(MycRP.SaveDir, 260, ofn.lpstrFile);
         int i = (int)strlen(MycRP.SaveDir) - 1;
         while ((i > 0) && (MycRP.SaveDir[i] != '\\')) i--;
@@ -2671,6 +3160,10 @@ void Add_TXT_File(void)
     {
         if (MessageBoxA(hWnd, "It is impossible to check that the TXT file is coming from the same ROM than the project, only proceed (YES) if you are sure, otherwise, cancel the action (NO)", "Warning", MB_YESNO) == IDYES)
         {
+            if (DialogBoxParam(hInst, MAKEINTRESOURCE(IDD_FILTERS), hWnd, Filter_Proc, (LPARAM)0) == -1)
+            {
+                return;
+            }
             FILE* pfile;
             if (fopen_s(&pfile, ofn.lpstrFile, "rb") != 0)
             {
