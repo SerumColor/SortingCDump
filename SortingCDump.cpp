@@ -35,7 +35,7 @@ using namespace Gdiplus;
 
 #define MAJ_VERSION 1
 #define MIN_VERSION 5
-#define BUILD_VERSION 1
+#define BUILD_VERSION 2
 
 static TCHAR szWindowClass[] = _T("ColorizingDMD");
 
@@ -1538,7 +1538,7 @@ void Apply_Filters_Frames(void)
 
     int* pDelete = (int*)malloc(MycRom.nFrames * sizeof(int));
     if (!pDelete) return;
-    //UINT32 nDeleted = 0;
+    memset(pDelete, 0xff, MycRom.nFrames * sizeof(int));
     for (UINT32 ti = 0; ti < MycRom.nFrames; ti++)
     {
         UINT8 ncols;
@@ -1631,7 +1631,6 @@ void Apply_Filters_Extra_Frames(UINT32 nold, UINT32 nnew)
 {
     UINT nfremoved = 0;
     UINT nfrremtime = 0, nfrremcol = 0, nfrremsame = 0, nfrremmask = 0;
-    UINT32 nFrames = MycRom.nFrames;
 
     selections[0].preframe = 0;
     selections[0].nselframes = 1;
@@ -1639,6 +1638,7 @@ void Apply_Filters_Extra_Frames(UINT32 nold, UINT32 nnew)
 
     int* pDelete = (int*)malloc(nnew * sizeof(int));
     if (!pDelete) return;
+    memset(pDelete, 0xff, MycRom.nFrames * sizeof(int));
     for (UINT32 ti = 0; ti < nnew; ti++)
     {
         UINT8 ncols;
@@ -1771,7 +1771,7 @@ void Apply_Filters_Extra_Frames(UINT32 nold, UINT32 nnew)
             memmove(&MycRom.TriggerID[ti + nold], &MycRom.TriggerID[tm + nold], tj * sizeof(UINT32));
             memmove(&MycRP.oFrames[(ti + nold) * fsize], &MycRP.oFrames[(tm + nold) * fsize], tj * fsize);
             memmove(&MycRP.FrameDuration[ti + nold], &MycRP.FrameDuration[tm + nold], tj * sizeof(UINT32));
-            memmove(&pDelete[ti + nold], &pDelete[tm + nold], tj * sizeof(int));
+            memmove(&pDelete[ti], &pDelete[tm], tj * sizeof(int));
             tl -= tm - ti;
         }
     }
@@ -1792,7 +1792,7 @@ void Apply_Filters_Extra_Frames(UINT32 nold, UINT32 nnew)
     MycRom.TriggerID = (UINT32*)realloc(MycRom.TriggerID, tl * sizeof(UINT32));
     MycRP.oFrames = (UINT8*)realloc(MycRP.oFrames, tl * fsize);
     MycRP.FrameDuration = (UINT32*)realloc(MycRP.FrameDuration, tl * sizeof(UINT32));
-    cprintf("%i frames removed (%i for short duration, %i for too many colors, %i identical, %i after applying masks), %i added", nfremoved, nfrremtime, nfrremcol, nfrremsame, nfrremmask, nFrames - nfremoved);
+    cprintf("%i frames removed (%i for short duration, %i for too many colors, %i identical, %i after applying masks), %i added", nfremoved, nfrremtime, nfrremcol, nfrremsame, nfrremmask, nnew - nfremoved);
     UpdateFSneeded = true;
 }
 
@@ -2398,18 +2398,18 @@ bool Add_cDump(char* path)
     for (UINT32 ti = MycRom.nFrames; ti < MycRom.nFrames + tnframes; ti++)
     {
         fread(&MycRP.FrameDuration[ti], sizeof(UINT32), 1, pf);
-        if (ti > 0) MycRP.FrameDuration[ti - 1] = MycRP.FrameDuration[ti] - MycRP.FrameDuration[ti - 1];
+        if (ti > MycRom.nFrames) MycRP.FrameDuration[ti - 1] = MycRP.FrameDuration[ti] - MycRP.FrameDuration[ti - 1];
         if (ti == MycRom.nFrames + tnframes - 1) MycRP.FrameDuration[ti] = 3000;
         fread(&MycRP.oFrames[ti * MycRom.fWidth * MycRom.fHeight], 1, MycRom.fWidth * MycRom.fHeight, pf);
         fread(&MycRom.cFrames[ti * MycRom.fWidth * MycRom.fHeight], 1, MycRom.fWidth * MycRom.fHeight, pf);
         fread(&MycRom.cPal[ti * 3 * MycRom.ncColors], 1, 3 * MycRom.ncColors, pf);
     }
     fclose(pf);
+    cprintf("Color Dump %s with %i frames loaded successfully", path, tnframes);
+    Apply_Filters_Extra_Frames(MycRom.nFrames, tnframes);
     MycRom.nFrames += tnframes;
     Calc_Resize_Frame();
     UpdateFSneeded = true;
-    cprintf("Color Dump %s with %i frames added successfully", path, MycRom.nFrames);
-    Apply_Filters_Extra_Frames(MycRom.nFrames, tnframes);
     return true;
 }
 
