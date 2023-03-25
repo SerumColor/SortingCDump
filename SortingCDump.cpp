@@ -35,6 +35,7 @@ using namespace Gdiplus;
 
 #define MAJ_VERSION 1
 #define MIN_VERSION 5
+#define BUILD_VERSION 1
 
 static TCHAR szWindowClass[] = _T("ColorizingDMD");
 
@@ -4506,7 +4507,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             GetCursorPos(&tpt);
             UINT nsel = 0;
             for (UINT ti = 0; ti < nselections; ti++) nsel += selections[ti].nselframes;
-            sprintf_s(tbuf, 256, "SortingCDump v%i.%i (by Zedrummer)     ROM name: %s      Frame: #%i/%i sel./%i tot.      @%.1fFPS", MAJ_VERSION, MIN_VERSION, MycRom.name, acframe, nsel, MycRom.nFrames, fps);
+            sprintf_s(tbuf, 256, "SortingCDump v%i.%i.%i (by Zedrummer)     ROM name: %s      Frame: #%i/%i sel./%i tot.      @%.1fFPS", MAJ_VERSION, MIN_VERSION, BUILD_VERSION, MycRom.name, acframe, nsel, MycRom.nFrames, fps);
             SetWindowTextA(hWnd, tbuf);
             glfwPollEvents();
         }
