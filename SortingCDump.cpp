@@ -1683,7 +1683,7 @@ void Apply_Filters_Extra_Frames(UINT32 nold, UINT32 nnew)
     {
         if (MycRom.CompMaskID[ti] != 255)
         {
-            MycRom.HashCode[ti] = crc32_fast_mask(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], &MycRom.CompMasks[MycRom.CompMaskID[ti] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
+            MycRom.HashCode[ti] = crc32_fast_mask(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], &MycRom.CompMasks[MycRom.CompMaskID[ti] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
             pnomaskhash[ti] = crc32_fast(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
         }
         else
@@ -2634,14 +2634,14 @@ void CompareAdditionalFrames(UINT nFrames, sFrames* pFrames)
     {
         if (MycRom.CompMaskID[ti] != 255)
         {
-            MycRom.HashCode[ti] = crc32_fast_mask(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], &MycRom.CompMasks[MycRom.CompMaskID[ti] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
-            pnomaskhash[ti] = crc32_fast(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
+            MycRom.HashCode[ti] = crc32_fast_mask(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], &MycRom.CompMasks[MycRom.CompMaskID[ti] * MycRom.fWidth * MycRom.fHeight], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
+            pnomaskhash[ti] = crc32_fast(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
         }
         else
         {
-            MycRom.HashCode[ti] = crc32_fast(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
+            MycRom.HashCode[ti] = crc32_fast(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, (BOOL)MycRom.ShapeCompMode[ti]);
             if (MycRom.ShapeCompMode[ti] == FALSE) pnomaskhash[ti] = MycRom.HashCode[ti];
-            else pnomaskhash[ti] = crc32_fast(&MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
+            else pnomaskhash[ti] = crc32_fast(&MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * ti], MycRom.fWidth * MycRom.fHeight, FALSE);
         }
     }
     // then compare the new frames with the previous ones
@@ -2862,15 +2862,8 @@ bool CopyTXTFrames2Frame(UINT nFrames, sFrames* pFrames)
             char* psFr = pFrames[tk].ptr;
             UINT8* pdoFr = &MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * MycRom.nFrames];
             UINT8* pdcFr = &MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * MycRom.nFrames];
-            if (tk < nFrames - 1)
-            {
-                UINT32 time1 = pFrames[tk].timecode;
-                UINT32 time2 = pFrames[tk + 1].timecode;
-                if (time2 < time1) MycRP.FrameDuration[MycRom.nFrames] = 0;
-                else if (time2 - time1 > 30000) MycRP.FrameDuration[MycRom.nFrames] = 0;
-                else MycRP.FrameDuration[MycRom.nFrames] = time2 - time1;
-            }
-            else MycRP.FrameDuration[MycRom.nFrames] = 0;
+            MycRP.FrameDuration[MycRom.nFrames] = pFrames[tk].timecode;
+
             Init_cFrame_Palette(&MycRom.cPal[sizepalette * MycRom.nFrames]);
             for (unsigned int tj = 0; tj < MycRom.fHeight * MycRom.fWidth; tj++)
             {
@@ -3010,15 +3003,7 @@ bool AddTXTFrames2Frame(UINT nFrames, sFrames* pFrames)
             UINT8* psFr = (UINT8*)pFrames[tk].ptr;
             UINT8* pdoFr = &MycRP.oFrames[MycRom.fWidth * MycRom.fHeight * MycRom.nFrames];
             UINT8* pdcFr = &MycRom.cFrames[MycRom.fWidth * MycRom.fHeight * MycRom.nFrames];
-            if (tk < nFrames - 1)
-            {
-                UINT32 time1 = pFrames[tk].timecode;
-                UINT32 time2 = pFrames[tk + 1].timecode;
-                if (time2 < time1) MycRP.FrameDuration[MycRom.nFrames] = 0;
-                else if (time2 - time1 > 30000) MycRP.FrameDuration[MycRom.nFrames] = 0;
-                else MycRP.FrameDuration[MycRom.nFrames] = time2 - time1;
-            }
-            else MycRP.FrameDuration[MycRom.nFrames] = 0;
+            MycRP.FrameDuration[MycRom.nFrames] = pFrames[tk].timecode;
             Init_cFrame_Palette(&MycRom.cPal[sizepalette * MycRom.nFrames]);
             for (unsigned int tj = 0; tj < MycRom.fHeight * MycRom.fWidth; tj++)
             {
