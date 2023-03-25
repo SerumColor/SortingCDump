@@ -35,7 +35,7 @@ using namespace Gdiplus;
 
 #define MAJ_VERSION 1
 #define MIN_VERSION 5
-#define BUILD_VERSION 2
+#define BUILD_VERSION 3
 
 static TCHAR szWindowClass[] = _T("ColorizingDMD");
 
@@ -1698,7 +1698,7 @@ void Apply_Filters_Extra_Frames(UINT32 nold, UINT32 nnew)
     // then compare the new frames with the previous ones
     for (unsigned int ti = 0; ti < (int)nnew; ti++)
     {
-        if (pDelete[ti + nold] >= 0) continue;
+        if (pDelete[ti] >= 0) continue;
         UINT8 premask = 255;
         BOOL isshapemode = FALSE;
         UINT32 achash = crc32_fast((UINT8*)MycRP.oFrames, MycRom.fWidth * MycRom.fHeight, FALSE);
@@ -2407,7 +2407,6 @@ bool Add_cDump(char* path)
     fclose(pf);
     cprintf("Color Dump %s with %i frames loaded successfully", path, tnframes);
     Apply_Filters_Extra_Frames(MycRom.nFrames, tnframes);
-    MycRom.nFrames += tnframes;
     Calc_Resize_Frame();
     UpdateFSneeded = true;
     return true;
