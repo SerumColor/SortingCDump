@@ -35,7 +35,7 @@ using namespace Gdiplus;
 
 #define MAJ_VERSION 1
 #define MIN_VERSION 5
-#define BUILD_VERSION 3
+#define BUILD_VERSION 5
 
 static TCHAR szWindowClass[] = _T("ColorizingDMD");
 
@@ -100,6 +100,15 @@ bool UpdateSSneeded = false; // Do we need to update the sprite strip
 #pragma endregion Global_Variables
 
 #pragma region Frame_Actions
+
+void ResetSelection(void)
+{
+    nselections = 1;
+    selections[0].preframe = 0;
+    selections[0].nselframes = 1;
+    PreFrameInStrip = 0;
+    UpdateFSneeded = true;
+}
 
 UINT New_Frame_Moved_Pos(UINT nofr, UINT nofrins, UINT nosel)
 {
@@ -1944,6 +1953,7 @@ bool Load_cRom(char* name)
     fclose(pfile);
     cprintf("Serum file %s with %i frames loaded successfully", name, MycRom.nFrames);
     UpdateFSneeded = true;
+    ResetSelection();
     return true;
 }
 
@@ -2300,6 +2310,7 @@ bool Load_cDump(char* path)// , char* rom)
     cprintf("Color Dump %s with %i frames loaded successfully", path, MycRom.nFrames);
     Apply_Filters_Frames();
     return true;
+    ResetSelection();
 }
 
 bool Add_cDump(char* path)
@@ -2409,6 +2420,7 @@ bool Add_cDump(char* path)
     Apply_Filters_Extra_Frames(MycRom.nFrames, tnframes);
     Calc_Resize_Frame();
     UpdateFSneeded = true;
+    ResetSelection();
     return true;
 }
 
@@ -3111,6 +3123,7 @@ void Load_TXT_File(void)
         isLoadedProject = true;
     }
     SetCurrentDirectoryA(acDir);
+    ResetSelection();
 }
 
 void Add_TXT_File(void)
@@ -3184,6 +3197,7 @@ void Add_TXT_File(void)
         }
     }
     SetCurrentDirectoryA(acDir);
+    ResetSelection();
 }
 #pragma endregion Project_File_Functions
 
@@ -3586,9 +3600,11 @@ void Check_Selection_Chunks(void)
     // first we merge the selections that cover
     for (int ti = 0; ti < (int)nselections; ti++)
     {
-        for (int tj = ti + 1; tj < (int)nselections; tj++)
+        for (int tj = 0; tj < (int)nselections; tj++)
         {
-            if (selections[ti].preframe + selections[ti].nselframes >= selections[tj].preframe)
+            if (ti == tj) continue;
+            if (((selections[ti].preframe < selections[tj].preframe) && (selections[ti].preframe + selections[ti].nselframes >= selections[tj].preframe))||
+                ((selections[tj].preframe < selections[ti].preframe) && (selections[tj].preframe + selections[tj].nselframes >= selections[ti].preframe)))
             {
                 // Selections need to be merged
                 UINT new_preframe = (selections[ti].preframe < selections[tj].preframe) ? selections[ti].preframe : selections[tj].preframe;
